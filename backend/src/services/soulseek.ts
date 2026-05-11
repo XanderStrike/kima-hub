@@ -198,7 +198,6 @@ export class SoulseekService {
     private readonly MAX_DOWNLOAD_RETRIES = 20;
 
     private readonly FAILURE_THRESHOLD = 3;
-    private readonly FAILURE_WINDOW = 300000;
     private readonly FAILED_USER_TTL = 86400;
 
     private activeDownloads = 0;
@@ -209,7 +208,6 @@ export class SoulseekService {
     private cooldownCleanupInterval: NodeJS.Timeout | null = null;
 
     private connectedAt: Date | null = null;
-    private lastSuccessfulSearch: Date | null = null;
     private consecutiveEmptySearches = 0;
     private totalSearches = 0;
     private totalSuccessfulSearches = 0;
@@ -647,9 +645,6 @@ export class SoulseekService {
         const metricsStartTime = Date.now();
         this.totalSearches++;
         const searchId = this.totalSearches;
-        const connectionAge = this.connectedAt
-            ? Math.round((Date.now() - this.connectedAt.getTime()) / 1000)
-            : 0;
 
         // Pre-flight connection check -- fail fast before consuming rate limiter slots.
         // rateLimitedSearch also calls ensureConnected, but this avoids wasting a slot
@@ -782,7 +777,6 @@ export class SoulseekService {
 
             // Success - reset counters
             this.consecutiveEmptySearches = 0;
-            this.lastSuccessfulSearch = new Date();
             this.totalSuccessfulSearches++;
 
             // Flatten responses to SearchResult format
@@ -1530,7 +1524,6 @@ async searchAndDownloadAlbum(
             const [username, dir] = key.split("|||");
             if (discPattern.test(dir)) {
                 const parentDir = dir.replace(discPattern, "");
-                const mergeKey = `${username}|||${parentDir}`;
                 if (!mergedKeys.has(key)) {
                     // Find all disc subfolders for this user+parent
                     for (const [otherKey, otherFiles] of groups) {

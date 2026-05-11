@@ -241,7 +241,7 @@ export class SlskClient extends (EventEmitter as new () => TypedEventEmitter<Sls
 
                     // Process any remaining file data in this chunk beyond the 4-byte token
                     if (data.length > 4) {
-                      const fileData = data.slice(4)
+                      const fileData = data.subarray(4)
                       download.receivedBytes += BigInt(fileData.length)
                       download.stream.write(fileData)
                       download.events.emit('data', fileData)
