@@ -1008,14 +1008,6 @@ class ApiClient {
         );
     }
 
-    async getTrackPreview(artistName: string, trackTitle: string) {
-        return this.request<{ previewUrl: string }>(
-            `/artists/preview/${encodeURIComponent(
-                artistName
-            )}/${encodeURIComponent(trackTitle)}`
-        );
-    }
-
     getTrackPreviewStreamUrl(artistName: string, trackTitle: string): string {
         const baseUrl = `${this.getBaseUrl()}/api/artists/preview/${encodeURIComponent(
             artistName
