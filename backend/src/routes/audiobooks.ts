@@ -546,13 +546,18 @@ router.get("/:id", requireAuthOrToken, apiLimiter, async (req, res) => {
                     ? `/audiobooks/${audiobook.id}/cover`
                     : null,
             duration: audiobook.duration || 0,
-            chapters: absBook.media?.chapters || [],
+            chapters: (absBook.media?.chapters || [])
+                .slice()
+                .sort((a: any, b: any) => (a.start ?? 0) - (b.start ?? 0)),
             audioFiles: absBook.media?.audioFiles || [],
-            tracks: (absBook.media?.tracks ?? []).map((t: any) => ({
-                index: t.index,
-                startOffset: t.startOffset ?? 0,
-                duration: t.duration ?? 0,
-            })),
+            tracks: (absBook.media?.tracks ?? [])
+                .slice()
+                .sort((a: any, b: any) => (a.startOffset ?? 0) - (b.startOffset ?? 0))
+                .map((t: any) => ({
+                    index: t.index,
+                    startOffset: t.startOffset ?? 0,
+                    duration: t.duration ?? 0,
+                })),
             libraryId: audiobook.libraryId,
             progress: progress
                 ? {
