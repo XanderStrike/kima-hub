@@ -327,6 +327,9 @@ export class AudioController {
             await this.audio.play();
             return true;
         } catch {
+            if (this.currentSrc) {
+                this.emit("needs-resume");
+            }
             return false;
         }
     }

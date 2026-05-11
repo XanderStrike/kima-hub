@@ -1335,8 +1335,10 @@ export function AudioControlsProvider({ children }: { children: ReactNode }) {
                     playback.setAudioError(null);
 
                     if (ctrl.hasAudio() && wasPlaying) {
-                        ctrl.tryResume().catch(() => {
-                            iosAudioLog("foreground:resume-failed", "audio-controls-context", null);
+                        ctrl.tryResume().then((resumed) => {
+                            if (!resumed) {
+                                iosAudioLog("foreground:resume-failed", "audio-controls-context", null);
+                            }
                         });
                     }
                 }
