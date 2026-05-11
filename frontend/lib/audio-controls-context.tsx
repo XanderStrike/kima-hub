@@ -352,6 +352,10 @@ export function AudioControlsProvider({ children }: { children: ReactNode }) {
     );
 
     const pause = useCallback(() => {
+        // Mark user-initiated pause so foreground recovery knows not to auto-resume.
+        if (typeof window !== "undefined") {
+            try { window.sessionStorage.setItem("kima_was_playing", "0"); } catch { /* ignore */ }
+        }
         controllerRef.current?.pause();
     }, []);
 
@@ -1259,6 +1263,23 @@ export function AudioControlsProvider({ children }: { children: ReactNode }) {
         return () => ctrl.off("pause", onPause);
     }, [controller]);
 
+    // -- wasPlaying flag (iOS foreground recovery) --
+    // Set to "1" on play, cleared to "0" only by user-initiated pause().
+    // NOT cleared on native pause events so iOS auto-pause does not suppress resume.
+    useEffect(() => {
+        const ctrl = controllerRef.current;
+        if (!ctrl) return;
+
+        const onPlay = () => {
+            if (typeof window !== "undefined") {
+                try { window.sessionStorage.setItem("kima_was_playing", "1"); } catch { /* ignore */ }
+            }
+        };
+
+        ctrl.on("play", onPlay);
+        return () => ctrl.off("play", onPlay);
+    }, [controller]);
+
     // -- Periodic save via timeupdate (30s throttle) --
     useEffect(() => {
         const ctrl = controllerRef.current;
@@ -1299,7 +1320,9 @@ export function AudioControlsProvider({ children }: { children: ReactNode }) {
 
         const handleForeground = () => {
             const ctrl = controllerRef.current;
-            iosAudioLog("vis:foreground", "audio-controls-context", null, { isPlaying: ctrl?.isPlaying() });
+            const wasPlaying = typeof window !== "undefined" &&
+                window.sessionStorage.getItem("kima_was_playing") === "1";
+            iosAudioLog("vis:foreground", "audio-controls-context", null, { wasPlaying });
             if (!ctrl) return;
 
             ctrl.notifyForeground();
@@ -1309,8 +1332,10 @@ export function AudioControlsProvider({ children }: { children: ReactNode }) {
                 if (hasMedia) {
                     playback.setAudioError(null);
 
-                    if (ctrl.isPlaying()) {
-                        ctrl.tryResume().catch(() => {});
+                    if (ctrl.hasAudio() && wasPlaying) {
+                        ctrl.tryResume().catch(() => {
+                            iosAudioLog("foreground:resume-failed", "audio-controls-context", null);
+                        });
                     }
                 }
             }
