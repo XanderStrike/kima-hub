@@ -548,7 +548,15 @@ export class SlskClient extends (EventEmitter as new () => TypedEventEmitter<Sls
       filename,
       receivedBytes: BigInt(receivedBytes ?? 0),
       stream: new stream.PassThrough(),
-      events: new EventEmitter() as SlskDownloadEventEmitter,
+      events: (() => {
+        const e = new EventEmitter() as SlskDownloadEventEmitter;
+        // Default error listener prevents an uncaughtException if the service-layer
+        // listener has not attached yet when an asynchronous error fires (see #192).
+        e.on('error', (err: any) => {
+          logger.warn('[SOULSEEK] Download error (default listener):', err?.message ?? err);
+        });
+        return e;
+      })(),
       requestQueuePosition: () => peer.send('placeInQueueRequest', { filename }),
       startedAt: Date.now(),
     }
