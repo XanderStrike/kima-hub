@@ -1172,7 +1172,9 @@ export function AudioControlsProvider({ children }: { children: ReactNode }) {
             state.setCurrentTrack(queueRef.current[nextIndex]);
             playback.setCurrentTime(0);
 
-            ctrl.load(api.getStreamUrl(nextTrack.id), true);
+            // Use swapAndPlay (synchronous src swap inside ended handler) to preserve
+            // the autoplay grant on iOS where load() -> play() loses it.
+            ctrl.swapAndPlay(api.getStreamUrl(nextTrack.id));
         };
 
         ctrl.on("ended", handleEnded);

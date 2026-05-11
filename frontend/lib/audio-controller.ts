@@ -389,6 +389,32 @@ export class AudioController {
         }, 10_000);
     }
 
+    /**
+     * iOS-safe track advance: swap src and call play() synchronously inside the
+     * caller's event tail (e.g., inside an "ended" handler). This may preserve the
+     * autoplay grant on iOS where load() -> play() does not.
+     */
+    swapAndPlay(src: string): void {
+        iosAudioLog("swapAndPlay:entry", "audio-controller:swapAndPlay", this.audio, { src: src.slice(-40) });
+        this.cancelNetworkRetry();
+        this.stopWatchdog();
+        this.cancelStallGrace();
+        this.currentSrc = src;
+        this.audio.src = src;
+        this.audio.play().catch((err) => {
+            if (err instanceof DOMException && err.name === "NotAllowedError") {
+                this.emit("needs-resume");
+                return;
+            }
+            if (err instanceof DOMException && err.name === "AbortError") {
+                this.reloadAndPlay();
+                return;
+            }
+            console.error("[AudioController] swapAndPlay failed:", err);
+            this.emit("error", { error: err instanceof Error ? err.message : String(err) });
+        });
+    }
+
     stop(): void {
         this.audio.pause();
         this.audio.currentTime = 0;
