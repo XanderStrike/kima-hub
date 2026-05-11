@@ -24,6 +24,7 @@ import { useAudioPlayback } from "./audio-playback-context";
 import { api } from "@/lib/api";
 import { useAudioController } from "./audio-controller-context";
 import { dispatchQueryEvent } from "@/lib/query-events";
+import { iosAudioLog } from "./iosAudioLog";
 
 interface AudioControlsContextType {
     // Track methods
@@ -222,6 +223,7 @@ export function AudioControlsProvider({ children }: { children: ReactNode }) {
 
     const playTrack = useCallback(
         (track: Track) => {
+            iosAudioLog("playTrack", "audio-controls-context");
             if (state.activeOperation.type !== 'idle') {
                 const opTrackIds = 'trackIds' in state.activeOperation
                     ? state.activeOperation.trackIds
@@ -290,6 +292,7 @@ export function AudioControlsProvider({ children }: { children: ReactNode }) {
 
     const playAudiobook = useCallback(
         (audiobook: Audiobook) => {
+            iosAudioLog("playAudiobook", "audio-controls-context");
             state.setPlaybackType("audiobook");
             state.setCurrentTrack(null);
             state.setCurrentPodcast(null);
@@ -1091,6 +1094,7 @@ export function AudioControlsProvider({ children }: { children: ReactNode }) {
         if (!ctrl) return;
 
         const handleEnded = () => {
+            iosAudioLog("ended:queue-advance", "audio-controls-context", null, { currentIndex: currentIndexRef.current, queueLength: queueRef.current.length });
             if (playbackTypeRef.current === "audiobook") {
                 const audiobook = currentAudiobookRef.current;
                 const tracks = audiobook?.tracks ?? [];
@@ -1280,6 +1284,7 @@ export function AudioControlsProvider({ children }: { children: ReactNode }) {
     // when the app is suspended/resumed from the app switcher.
     useEffect(() => {
         const handleBackground = () => {
+            iosAudioLog("vis:background", "audio-controls-context");
             if (playbackTypeRef.current === "audiobook") {
                 saveAudiobookProgressRef.current();
             } else if (playbackTypeRef.current === "podcast") {
@@ -1289,6 +1294,7 @@ export function AudioControlsProvider({ children }: { children: ReactNode }) {
 
         const handleForeground = () => {
             const ctrl = controllerRef.current;
+            iosAudioLog("vis:foreground", "audio-controls-context", null, { isPlaying: ctrl?.isPlaying() });
             if (!ctrl) return;
 
             ctrl.notifyForeground();
@@ -1314,6 +1320,7 @@ export function AudioControlsProvider({ children }: { children: ReactNode }) {
         };
 
         const handlePageShow = (e: PageTransitionEvent) => {
+            iosAudioLog("pageshow", "audio-controls-context", null, { persisted: e.persisted });
             if (e.persisted) handleForeground();
         };
 
