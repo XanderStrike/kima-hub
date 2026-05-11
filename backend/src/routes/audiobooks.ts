@@ -104,8 +104,12 @@ router.post("/sync", requireAuthOrToken, apiLimiter, async (req, res) => {
             success: true,
             result,
         });
-    } catch (error) {
-        safeError(res, "Audiobook sync failed", error);
+    } catch (error: any) {
+        logger.error("[AUDIOBOOK] Sync failed:", error?.message ?? error);
+        res.status(500).json({
+            success: false,
+            error: error?.message ?? "Audiobook sync failed",
+        });
     }
 });
 
