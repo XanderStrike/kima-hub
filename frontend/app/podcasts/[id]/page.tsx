@@ -1,6 +1,7 @@
 "use client";
 
 import DOMPurify from "dompurify";
+import { useRouter } from "next/navigation";
 import { GradientSpinner } from "@/components/ui/GradientSpinner";
 import { useImageColor } from "@/hooks/useImageColor";
 
@@ -15,10 +16,13 @@ import { PreviewEpisodes } from "@/features/podcast/components/PreviewEpisodes";
 import { SimilarPodcasts } from "@/features/podcast/components/SimilarPodcasts";
 
 export default function PodcastDetailPage() {
+    const router = useRouter();
     const {
         podcastId,
         podcast,
         previewData,
+        previewLoadState,
+        previewError,
         displayData,
         isLoading,
         heroImage,
@@ -47,6 +51,24 @@ export default function PodcastDetailPage() {
         isPlaying,
         pause,
     } = usePodcastActions(podcastId, sortedEpisodes);
+
+    if (previewLoadState === "error") {
+        return (
+            <div className="flex items-center justify-center min-h-screen bg-[#0a0a0a]">
+                <div className="flex flex-col items-center gap-3 text-center">
+                    <p className="text-xs font-mono text-gray-500 uppercase tracking-wider">
+                        {previewError || "Could not load podcast"}
+                    </p>
+                    <button
+                        onClick={() => router.back()}
+                        className="text-xs font-mono text-gray-600 uppercase tracking-wider underline underline-offset-2 hover:text-gray-400 transition-colors"
+                    >
+                        Go back
+                    </button>
+                </div>
+            </div>
+        );
+    }
 
     if (isLoading) {
         return (

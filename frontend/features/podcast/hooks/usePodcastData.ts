@@ -30,6 +30,7 @@ export function usePodcastData() {
   // State for preview mode, subscription, and similar podcasts
   const [previewData, setPreviewData] = useState<PodcastPreview | null>(null);
   const [previewLoadState, setPreviewLoadState] = useState<'idle' | 'loading' | 'done' | 'error'>('idle');
+  const [previewError, setPreviewError] = useState<string | null>(null);
   const [similarPodcasts, setSimilarPodcasts] = useState<SimilarPodcast[]>([]);
   const [sortOrder, setSortOrder] = useState<"newest" | "oldest">(() => {
     if (typeof window !== "undefined") {
@@ -84,10 +85,11 @@ export function usePodcastData() {
         if (preview.isSubscribed && preview.subscribedPodcastId) {
           router.replace(`/podcasts/${preview.subscribedPodcastId}`);
         }
-      } catch (error) {
+      } catch (err) {
         if (!cancelled) {
-          console.error("Failed to load preview:", error);
+          console.error("Failed to load preview:", err);
           setPreviewLoadState('error');
+          setPreviewError(err instanceof Error ? err.message : "Could not load podcast");
         }
       }
     }
@@ -145,6 +147,8 @@ export function usePodcastData() {
     podcastId,
     podcast: podcast as Podcast | undefined,
     previewData,
+    previewLoadState,
+    previewError,
     displayData,
     isLoading,
     heroImage,
