@@ -52,6 +52,9 @@ export class AudioController {
     private reloadFailsafeTimeout: ReturnType<typeof setTimeout> | null = null;
     private reloadFailsafeListener: (() => void) | null = null;
 
+    // Route-change observability: track time of last play to compute ms-since-play on pause.
+    private lastPlayAt = 0;
+
     constructor(audio: HTMLAudioElement) {
         this.audio = audio;
         this.audio.preload = "auto";
@@ -87,6 +90,7 @@ export class AudioController {
         };
 
         add("playing", () => {
+            this.lastPlayAt = Date.now();
             iosAudioLog("playing", "audio-controller:listeners", this.audio);
             this.networkRetryCount = 0;
             this.stallRecoveryCount = 0;
@@ -96,7 +100,9 @@ export class AudioController {
         });
 
         add("pause", () => {
-            iosAudioLog("pause", "audio-controller:listeners", this.audio);
+            iosAudioLog("pause", "audio-controller:listeners", this.audio, {
+                msSincePlay: Date.now() - this.lastPlayAt,
+            });
             this.stopWatchdog();
             this.emit("pause");
         });

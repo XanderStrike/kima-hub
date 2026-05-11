@@ -1360,6 +1360,17 @@ export function AudioControlsProvider({ children }: { children: ReactNode }) {
             handleBackground();
         };
 
+        let deviceChangeAbort: (() => void) | undefined;
+        try {
+            const handler = () => {
+                iosAudioLog("devicechange", "audio-controls-context", null);
+            };
+            navigator.mediaDevices?.addEventListener("devicechange", handler);
+            deviceChangeAbort = () => navigator.mediaDevices?.removeEventListener("devicechange", handler);
+        } catch {
+            // API not available on this device/browser
+        }
+
         document.addEventListener("visibilitychange", handleVisibility);
         window.addEventListener("pageshow", handlePageShow);
         window.addEventListener("pagehide", handlePageHide);
@@ -1367,6 +1378,7 @@ export function AudioControlsProvider({ children }: { children: ReactNode }) {
             document.removeEventListener("visibilitychange", handleVisibility);
             window.removeEventListener("pageshow", handlePageShow);
             window.removeEventListener("pagehide", handlePageHide);
+            deviceChangeAbort?.();
         };
     }, [playback]);
 
