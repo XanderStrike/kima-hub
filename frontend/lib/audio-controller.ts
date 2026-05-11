@@ -1,5 +1,7 @@
 "use client";
 
+import { iosAudioLog } from "./iosAudioLog";
+
 export type AudioControllerEvent =
     | "play"
     | "pause"
@@ -85,6 +87,7 @@ export class AudioController {
         };
 
         add("playing", () => {
+            iosAudioLog("playing", "audio-controller:listeners", this.audio);
             this.networkRetryCount = 0;
             this.stallRecoveryCount = 0;
             this.startWatchdog();
@@ -93,11 +96,13 @@ export class AudioController {
         });
 
         add("pause", () => {
+            iosAudioLog("pause", "audio-controller:listeners", this.audio);
             this.stopWatchdog();
             this.emit("pause");
         });
 
         add("ended", () => {
+            iosAudioLog("ended", "audio-controller:listeners", this.audio);
             this.stopWatchdog();
             this.emit("ended");
         });
@@ -108,6 +113,10 @@ export class AudioController {
         });
 
         add("canplay", () => {
+            iosAudioLog("canplay", "audio-controller:listeners", this.audio, {
+                autoResumeAfterRecovery: this.autoResumeAfterRecovery,
+                retrySeekTime: this.retrySeekTime,
+            });
             if (this.retrySeekTime !== null) {
                 const seekTo = this.retrySeekTime;
                 this.retrySeekTime = null;
@@ -138,6 +147,7 @@ export class AudioController {
         });
 
         add("stalled", () => {
+            iosAudioLog("stalled", "audio-controller:listeners", this.audio);
             if (this.audio.paused || this.audio.ended) return;
             if (this.stallGraceTimeout) return;
 
@@ -155,6 +165,10 @@ export class AudioController {
         });
 
         add("error", () => {
+            iosAudioLog("error", "audio-controller:listeners", this.audio, {
+                code: this.audio.error?.code,
+                message: this.audio.error?.message,
+            });
             const err = this.audio.error;
 
             if (
@@ -238,6 +252,7 @@ export class AudioController {
     }
 
     private attemptStallRecovery(): void {
+        iosAudioLog("stall-recovery", "audio-controller:attemptStallRecovery", this.audio);
         if (!this.currentSrc) return;
 
         this.cancelStallGrace();
@@ -268,6 +283,7 @@ export class AudioController {
     }
 
     async play(): Promise<void> {
+        iosAudioLog("play:entry", "audio-controller:play", this.audio);
         if (!this.audio.src) return;
 
         this.setAudioSessionPlayback();
@@ -276,6 +292,7 @@ export class AudioController {
             await this.audio.play();
         } catch (err) {
             if (err instanceof DOMException && err.name === "AbortError") {
+                iosAudioLog("play:abort-error", "audio-controller:play", this.audio);
                 // On iOS, AbortError after interruption means the audio element
                 // is in a bad state. Try reloading the source as a recovery.
                 if (this.currentSrc) {
@@ -284,6 +301,7 @@ export class AudioController {
                 return;
             }
             if (err instanceof DOMException && err.name === "NotAllowedError") {
+                iosAudioLog("play:not-allowed", "audio-controller:play", this.audio);
                 // User gesture required — emit needs-resume so UI can prompt
                 this.emit("needs-resume");
                 return;
@@ -341,6 +359,7 @@ export class AudioController {
      * canplay within 10 s, emits needs-resume so the UI can prompt the user.
      */
     reloadAndPlay(): void {
+        iosAudioLog("reload:entry", "audio-controller:reloadAndPlay", this.audio);
         if (!this.currentSrc) return;
         const currentTime = this.audio.currentTime;
         this.retrySeekTime = Number.isFinite(currentTime) && currentTime > 0 ? currentTime : null;
@@ -361,6 +380,7 @@ export class AudioController {
 
         // Safety net: if canplay never fires, notify the UI
         this.reloadFailsafeTimeout = setTimeout(() => {
+            iosAudioLog("reload:failsafe-fired", "audio-controller:reloadAndPlay", this.audio);
             this.clearReloadFailsafe();
             if (this.autoResumeAfterRecovery) {
                 this.autoResumeAfterRecovery = false;
@@ -375,6 +395,10 @@ export class AudioController {
     }
 
     load(src: string, autoplay: boolean = false): void {
+        iosAudioLog("load:entry", "audio-controller:load", this.audio, {
+            autoplay,
+            sameSrc: this.currentSrc === src,
+        });
         if (this.currentSrc === src && this.audio.readyState >= 2) {
             if (autoplay && this.audio.paused) {
                 this.play();
