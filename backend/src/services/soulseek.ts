@@ -1280,6 +1280,14 @@ if (!this.client) {
                         }
                     });
 
+                    download.events.on("error", (err: any) => {
+                        sessionLog(
+                            "SOULSEEK",
+                            `Download ${download.filename} errored: ${err?.message ?? err}`,
+                            "ERROR"
+                        );
+                    });
+
                     download.stream.on("error", async (err: Error) => {
                         if (resolved) return;
                         clearTimeout(timeoutId);
