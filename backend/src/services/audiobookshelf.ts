@@ -269,8 +269,15 @@ class AudiobookshelfService {
         await this.ensureInitialized();
 
         const audiobook = await this.getAudiobook(audiobookId);
-        const tracks = audiobook.media?.tracks ?? [];
-        const track = tracks[trackIndex] ?? tracks[0];
+        const tracks = (audiobook.media?.tracks ?? []).slice().sort(
+            (a: any, b: any) => (a.startOffset ?? 0) - (b.startOffset ?? 0),
+        );
+        const track =
+            tracks.find((t: any) => t.index === trackIndex) ??
+            tracks[0];
+        if (trackIndex !== 0 && !tracks.find((t: any) => t.index === trackIndex)) {
+            logger.warn(`[ABS] streamAudiobook: trackIndex=${trackIndex} not found, falling back to first track`);
+        }
         if (!track?.contentUrl) {
             throw new Error("No audio track found for this audiobook");
         }
