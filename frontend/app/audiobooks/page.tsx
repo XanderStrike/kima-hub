@@ -241,15 +241,26 @@ export default function AudiobooksPage() {
         if (isSyncing) return;
         setIsSyncing(true);
         try {
-            const res = await api.post<{ result: { synced: number; failed: number; skipped: number } }>("/audiobooks/sync", {});
-            const result = res?.result;
-            const parts = [`Synced ${result?.synced ?? 0} audiobooks`];
-            if (result?.failed) parts.push(`${result.failed} failed`);
-            if (result?.skipped) parts.push(`${result.skipped} skipped`);
-            toast.success(parts.join(", "));
+            const res = await api.post<{
+                success: boolean;
+                result?: { synced: number; failed: number; skipped: number; errors: string[] };
+                error?: string;
+            }>("/audiobooks/sync", {});
+            if (!res?.success) {
+                toast.error(res?.error || "Audiobook sync failed");
+                return;
+            }
+            const r = res.result;
+            if (r && r.failed > 0) {
+                toast.error(
+                    `Synced ${r.synced}, failed ${r.failed}${r.errors[0] ? `: ${r.errors[0]}` : ""}`
+                );
+            } else if (r) {
+                toast.success(`Synced ${r.synced} audiobooks`);
+            }
             await queryClient.refetchQueries({ queryKey: queryKeys.audiobooks() });
-        } catch {
-            toast.error("Audiobook sync failed");
+        } catch (error) {
+            toast.error((error as Error)?.message || "Audiobook sync failed");
         } finally {
             setIsSyncing(false);
         }
