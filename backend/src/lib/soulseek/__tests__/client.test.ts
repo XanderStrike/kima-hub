@@ -30,4 +30,71 @@ describe("Soulseek download events", () => {
         }
         expect(threw).toBe(true);
     });
+
+    it("service-layer error listener resolves promise with failure shape", async () => {
+        const events = new EventEmitter();
+        // Default listener (mirrors client.ts fix from commit 7704bae)
+        events.on("error", () => {});
+
+        let resolved = false;
+        let cleanupCalled = false;
+        let resolvedValue: { success: boolean; error?: string } | null = null;
+
+        const promise = new Promise<{ success: boolean; error?: string }>((resolve) => {
+            const cleanup = () => {
+                if (!resolved) {
+                    resolved = true;
+                    cleanupCalled = true;
+                }
+            };
+
+            // Service-layer listener (mirrors the fix in soulseek.ts)
+            events.on("error", (err: any) => {
+                if (resolved) return;
+                cleanup();
+                resolve({
+                    success: false,
+                    error: err?.message ?? String(err),
+                });
+            });
+        });
+
+        events.emit("error", new Error("Connection closed before transfer completed"));
+
+        resolvedValue = await promise;
+
+        expect(resolvedValue.success).toBe(false);
+        expect(resolvedValue.error).toBe("Connection closed before transfer completed");
+        expect(cleanupCalled).toBe(true);
+    });
+
+    it("service-layer error listener is idempotent -- double emit does not re-resolve", async () => {
+        const events = new EventEmitter();
+        events.on("error", () => {});
+
+        let resolveCount = 0;
+        let resolved = false;
+
+        const promise = new Promise<{ success: boolean; error?: string }>((resolve) => {
+            const cleanup = () => {
+                if (!resolved) {
+                    resolved = true;
+                }
+            };
+
+            events.on("error", (err: any) => {
+                if (resolved) return;
+                cleanup();
+                resolveCount++;
+                resolve({ success: false, error: err?.message ?? String(err) });
+            });
+        });
+
+        events.emit("error", new Error("first"));
+        events.emit("error", new Error("second"));
+
+        await promise;
+
+        expect(resolveCount).toBe(1);
+    });
 });

@@ -1275,11 +1275,27 @@ if (!this.client) {
                     });
 
                     download.events.on("error", (err: any) => {
+                        if (resolved) return;
+                        clearTimeout(timeoutId);
+                        cleanup();
                         sessionLog(
                             "SOULSEEK",
                             `Download ${download.filename} errored: ${err?.message ?? err}`,
                             "ERROR"
                         );
+                        this.client?.removeDownload(download);
+                        writeStream.destroy();
+                        if (fs.existsSync(destPath)) {
+                            try {
+                                fs.unlinkSync(destPath);
+                            } catch {
+                                // ignore cleanup errors
+                            }
+                        }
+                        resolve({
+                            success: false,
+                            error: err?.message ?? String(err),
+                        });
                     });
 
                     download.stream.on("error", async (err: Error) => {
