@@ -4,6 +4,7 @@ import { useAudioPlayback } from "@/lib/audio-playback-context";
 import { useAudioControls } from "@/lib/audio-controls-context";
 import { useAudioController } from "@/lib/audio-controller-context";
 import { api } from "@/lib/api";
+import { iosAudioLog } from "@/lib/iosAudioLog";
 
 export function useMediaSession() {
     const controller = useAudioController();
@@ -59,6 +60,7 @@ export function useMediaSession() {
         if (!controller) return;
 
         navigator.mediaSession.setActionHandler("play", async () => {
+            iosAudioLog("ms:play", "useMediaSession", null, { hasController: !!controller });
             // Eagerly push position state before iOS defers JS execution
             if ("setPositionState" in navigator.mediaSession) {
                 const duration = controller.getDuration();
@@ -80,17 +82,20 @@ export function useMediaSession() {
                 await controller.play();
             } catch {
                 // play() failed (iOS audio session may be invalidated).
-                // Reload source and try again — this re-establishes the
+                // Reload source and try again -- this re-establishes the
                 // audio hardware connection that iOS drops on interruption.
+                iosAudioLog("ms:play:fallback-reload", "useMediaSession");
                 controller.reloadAndPlay();
             }
         });
 
         navigator.mediaSession.setActionHandler("pause", () => {
+            iosAudioLog("ms:pause", "useMediaSession");
             controller.pause();
         });
 
         navigator.mediaSession.setActionHandler("previoustrack", () => {
+            iosAudioLog("ms:prev", "useMediaSession");
             if (playbackTypeRef.current === "track") {
                 previousRef.current();
             } else {
@@ -99,6 +104,7 @@ export function useMediaSession() {
         });
 
         navigator.mediaSession.setActionHandler("nexttrack", () => {
+            iosAudioLog("ms:next", "useMediaSession");
             if (playbackTypeRef.current === "track") {
                 nextRef.current();
             } else {
@@ -108,16 +114,19 @@ export function useMediaSession() {
 
         try {
             navigator.mediaSession.setActionHandler("seekbackward", (details) => {
+                iosAudioLog("ms:seekback", "useMediaSession");
                 const skip = details.seekOffset || 10;
                 seekRef.current(Math.max(currentTimeRef.current - skip, 0));
             });
 
             navigator.mediaSession.setActionHandler("seekforward", (details) => {
+                iosAudioLog("ms:seekfwd", "useMediaSession");
                 const skip = details.seekOffset || 10;
                 seekRef.current(currentTimeRef.current + skip);
             });
 
             navigator.mediaSession.setActionHandler("seekto", (details) => {
+                iosAudioLog("ms:seekto", "useMediaSession");
                 if (details.seekTime !== undefined) {
                     seekRef.current(details.seekTime);
                 }
