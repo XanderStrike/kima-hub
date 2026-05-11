@@ -42,6 +42,17 @@ export function usePodcastData() {
     return "newest";
   });
 
+  // Reset preview/error state when navigating between podcasts so a previous
+  // page's error UI does not sticky-state into the next podcast's view.
+  const [prevPodcastId, setPrevPodcastId] = useState(podcastId);
+  if (prevPodcastId !== podcastId) {
+    setPrevPodcastId(podcastId);
+    setPreviewLoadState('idle');
+    setPreviewError(null);
+    setPreviewData(null);
+    setSimilarPodcasts([]);
+  }
+
   // Get raw cover URL
   const rawCoverUrl = podcast?.coverUrl || previewData?.coverUrl;
   const heroImage = rawCoverUrl ? api.getCoverArtUrl(rawCoverUrl, 1200) : null;
