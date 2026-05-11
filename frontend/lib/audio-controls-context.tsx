@@ -302,17 +302,22 @@ export function AudioControlsProvider({ children }: { children: ReactNode }) {
             state.setShuffleIndices([]);
 
             const totalBookStartTime = audiobook.progress?.currentTime ?? 0;
-            const tracks = audiobook.tracks ?? [];
+            const tracks = (audiobook.tracks ?? [])
+                .slice()
+                .sort((a, b) => (a.startOffset ?? 0) - (b.startOffset ?? 0));
 
-            let startTrackIndex = 0;
-            let trackStartOffset = 0;
+            let startTrackIndex = tracks[0]?.index ?? 0;
+            let trackStartOffset = tracks[0]?.startOffset ?? 0;
             if (tracks.length > 1) {
-                for (const t of tracks) {
-                    if (t.startOffset <= totalBookStartTime) {
-                        startTrackIndex = t.index;
-                        trackStartOffset = t.startOffset;
+                let found = tracks[0];
+                for (let i = tracks.length - 1; i >= 0; i--) {
+                    if ((tracks[i].startOffset ?? 0) <= totalBookStartTime) {
+                        found = tracks[i];
+                        break;
                     }
                 }
+                startTrackIndex = found.index;
+                trackStartOffset = found.startOffset ?? 0;
             }
             const withinTrackStartTime = totalBookStartTime - trackStartOffset;
 
