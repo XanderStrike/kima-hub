@@ -1,22 +1,16 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
 
-/**
- * Dynamic manifest that serves "display": "browser" on iOS.
- *
- * iOS standalone PWAs (WKWebView) have a known WebKit bug (#261858) where
- * the audio session is suspended when the app is backgrounded and cannot
- * be reactivated from Control Center — play() resolves but produces no
- * sound. Safari tabs don't have this problem because the Safari process
- * maintains the audio session.
- *
- * By serving display: "browser" on iOS, "Add to Home Screen" creates a
- * bookmark that opens in a Safari tab instead of a standalone WKWebView,
- * giving users full background audio with Control Center support.
- *
- * Desktop and Android continue to get the full standalone PWA experience.
- */
+// Standalone PWA on every platform. The previous iOS-specific
+// `display: "browser"` workaround for WebKit #261858 (audio session
+// suspended in standalone WKWebView) made "Add to Home Screen" open a
+// Safari tab whose chrome covered the top nav and bottom player rows.
+// The iOS audio recovery paths shipped in v1.7.13 (wasPlaying-driven
+// foreground resume, synchronous src swap on track-end, needs-resume
+// emit from tryResume) handle the suspended-session case via UI prompts
+// and a user-gesture-driven reload, so standalone is the correct
+// long-term default.
 
-const BASE_MANIFEST = {
+const MANIFEST = {
     id: "/",
     name: "Kima",
     short_name: "Kima",
@@ -42,23 +36,12 @@ const BASE_MANIFEST = {
         { name: "Search", short_name: "Search", url: "/search", icons: [{ src: "assets/icons/icon-96.webp", sizes: "96x96" }] },
         { name: "Library", short_name: "Library", url: "/library", icons: [{ src: "assets/icons/icon-96.webp", sizes: "96x96" }] },
     ],
+    display: "standalone",
+    display_override: ["window-controls-overlay", "standalone"],
 };
 
-function isIOS(ua: string): boolean {
-    return /iPhone|iPad|iPod/.test(ua);
-}
-
-export async function GET(request: NextRequest) {
-    const ua = request.headers.get("user-agent") || "";
-    const ios = isIOS(ua);
-
-    const manifest = {
-        ...BASE_MANIFEST,
-        display: ios ? "browser" : "standalone",
-        ...(ios ? {} : { display_override: ["window-controls-overlay", "standalone"] }),
-    };
-
-    return NextResponse.json(manifest, {
+export async function GET() {
+    return NextResponse.json(MANIFEST, {
         headers: {
             "Content-Type": "application/manifest+json",
             "Cache-Control": "public, max-age=3600",

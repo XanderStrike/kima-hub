@@ -40,11 +40,12 @@ export const metadata: Metadata = {
         ],
     },
     appleWebApp: {
-        // capable is intentionally omitted (defaults to false).
-        // iOS standalone PWAs have a WebKit bug (#261858) where the audio
-        // session is suspended on background and cannot be reactivated from
-        // Control Center. By not declaring capable, "Add to Home Screen"
-        // creates a Safari bookmark instead, which has full audio support.
+        // Standalone PWA on iOS so "Add to Home Screen" opens fullscreen and
+        // safe-area-inset values activate, freeing the top nav and bottom
+        // player from Safari chrome overlap. Audio session continuity is
+        // handled by the v1.7.13 iOS recovery paths (wasPlaying flag,
+        // swapAndPlay, needs-resume emit) rather than by avoiding standalone.
+        capable: true,
         statusBarStyle: "black-translucent",
         title: "Kima",
     },
