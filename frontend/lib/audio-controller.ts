@@ -55,6 +55,16 @@ export class AudioController {
     // Route-change observability: track time of last play to compute ms-since-play on pause.
     private lastPlayAt = 0;
 
+    // iOS standalone PWA audio session bridge. iOS WKWebView suspends the
+    // HTMLAudioElement's audio session when backgrounded; MediaSession reports
+    // "playing" but no sound. Routing the element through an AudioContext
+    // keeps the iOS audio session active across backgrounding because the
+    // AudioContext claims it more durably than a bare <audio>.
+    // WebKit #261858. Bridge set up lazily on the first user-gesture play.
+    private audioContext: AudioContext | null = null;
+    private mediaSourceNode: MediaElementAudioSourceNode | null = null;
+    private audioContextBridgeAttempted = false;
+
     constructor(audio: HTMLAudioElement) {
         this.audio = audio;
         this.audio.preload = "auto";
@@ -80,6 +90,50 @@ export class AudioController {
             }
         } catch {
             // Not supported
+        }
+    }
+
+    private isIosStandalone(): boolean {
+        if (typeof window === "undefined") return false;
+        try {
+            const isIos = /iPhone|iPad|iPod/.test(navigator.userAgent);
+            if (!isIos) return false;
+            const legacy = (navigator as { standalone?: boolean }).standalone === true;
+            const modern = window.matchMedia?.("(display-mode: standalone)").matches === true;
+            return legacy || modern;
+        } catch {
+            return false;
+        }
+    }
+
+    private setupAudioContextBridge(): void {
+        if (this.audioContextBridgeAttempted) {
+            // Already attempted; resume if suspended (idempotent, cheap).
+            this.audioContext?.resume?.().catch(() => {});
+            return;
+        }
+        if (!this.isIosStandalone()) return;
+        this.audioContextBridgeAttempted = true;
+        try {
+            const AC = window.AudioContext || (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+            if (!AC) return;
+            this.audioContext = new AC();
+            this.mediaSourceNode = this.audioContext.createMediaElementSource(this.audio);
+            this.mediaSourceNode.connect(this.audioContext.destination);
+            this.audioContext.resume().catch(() => {});
+            iosAudioLog(
+                "audio-context:bridge-up",
+                "audio-controller:setupAudioContextBridge",
+                this.audio,
+                { state: this.audioContext.state },
+            );
+        } catch (err) {
+            iosAudioLog(
+                "audio-context:bridge-fail",
+                "audio-controller:setupAudioContextBridge",
+                this.audio,
+                { error: err instanceof Error ? err.message : String(err) },
+            );
         }
     }
 
@@ -293,6 +347,7 @@ export class AudioController {
         if (!this.audio.src) return;
 
         this.setAudioSessionPlayback();
+        this.setupAudioContextBridge();
 
         try {
             await this.audio.play();
@@ -322,6 +377,7 @@ export class AudioController {
         if (!this.audio.paused) return true;
 
         this.setAudioSessionPlayback();
+        this.setupAudioContextBridge();
 
         try {
             await this.audio.play();
