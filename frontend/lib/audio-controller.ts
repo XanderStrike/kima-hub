@@ -65,6 +65,15 @@ export class AudioController {
     private mediaSourceNode: MediaElementAudioSourceNode | null = null;
     private audioContextBridgeAttempted = false;
 
+    // Silent-playback watchdog: after audio.play() resolves, expect a real
+    // timeupdate event within SILENT_PLAYBACK_TIMEOUT_MS. If none arrives,
+    // assume iOS has us in a "playing but silent" state (audio.paused=false,
+    // MediaSession.playbackState="playing", no audio routing). Pause and emit
+    // needs-resume so the UI renders a Tap-to-resume prompt; the user tap is
+    // a fresh user gesture that can actually resume the AudioContext.
+    private silentPlaybackTimeout: ReturnType<typeof setTimeout> | null = null;
+    private readonly SILENT_PLAYBACK_TIMEOUT_MS = 2500;
+
     constructor(audio: HTMLAudioElement) {
         this.audio = audio;
         this.audio.preload = "auto";
@@ -106,27 +115,57 @@ export class AudioController {
         }
     }
 
-    private setupAudioContextBridge(): void {
+    /**
+     * Ensure the iOS AudioContext bridge is set up and the context is running.
+     * Returns the final context state (or null if no bridge is needed on this
+     * platform / browser). Always awaits resume() rather than fire-and-forget
+     * so callers can gate play() on the actual ready state -- iOS nap-mode
+     * and long backgrounding can leave the context "suspended" or
+     * "interrupted" and a play() before resume completes produces silent
+     * playback (audio.paused=false but no audio routing).
+     */
+    private async setupAudioContextBridge(): Promise<AudioContextState | null> {
         if (this.audioContextBridgeAttempted) {
-            // Already attempted; resume if suspended (idempotent, cheap).
-            this.audioContext?.resume?.().catch(() => {});
-            return;
+            if (!this.audioContext) return null;
+            if (this.audioContext.state !== "running") {
+                try {
+                    await this.audioContext.resume();
+                } catch (err) {
+                    iosAudioLog(
+                        "audio-context:resume-rejected",
+                        "audio-controller:setupAudioContextBridge",
+                        this.audio,
+                        { error: err instanceof Error ? err.message : String(err), state: this.audioContext.state },
+                    );
+                }
+            }
+            return this.audioContext.state;
         }
-        if (!this.isIosStandalone()) return;
+        if (!this.isIosStandalone()) return null;
         this.audioContextBridgeAttempted = true;
         try {
             const AC = window.AudioContext || (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
-            if (!AC) return;
+            if (!AC) return null;
             this.audioContext = new AC();
             this.mediaSourceNode = this.audioContext.createMediaElementSource(this.audio);
             this.mediaSourceNode.connect(this.audioContext.destination);
-            this.audioContext.resume().catch(() => {});
+            try {
+                await this.audioContext.resume();
+            } catch (err) {
+                iosAudioLog(
+                    "audio-context:initial-resume-rejected",
+                    "audio-controller:setupAudioContextBridge",
+                    this.audio,
+                    { error: err instanceof Error ? err.message : String(err), state: this.audioContext.state },
+                );
+            }
             iosAudioLog(
                 "audio-context:bridge-up",
                 "audio-controller:setupAudioContextBridge",
                 this.audio,
                 { state: this.audioContext.state },
             );
+            return this.audioContext.state;
         } catch (err) {
             iosAudioLog(
                 "audio-context:bridge-fail",
@@ -134,6 +173,7 @@ export class AudioController {
                 this.audio,
                 { error: err instanceof Error ? err.message : String(err) },
             );
+            return null;
         }
     }
 
@@ -169,6 +209,7 @@ export class AudioController {
 
         add("timeupdate", () => {
             this.cancelStallGrace();
+            this.cancelSilentPlaybackWatchdog();
             this.emit("timeupdate", { time: this.audio.currentTime });
         });
 
@@ -342,15 +383,53 @@ export class AudioController {
         }
     }
 
+    private startSilentPlaybackWatchdog(): void {
+        this.cancelSilentPlaybackWatchdog();
+        if (!this.isIosStandalone()) return;
+        this.silentPlaybackTimeout = setTimeout(() => {
+            this.silentPlaybackTimeout = null;
+            // If we're "playing" but timeupdate hasn't fired (cancelled this),
+            // iOS is silently swallowing the audio. Pause and prompt the user.
+            if (!this.audio.paused && !this.audio.ended) {
+                iosAudioLog(
+                    "silent-playback:detected",
+                    "audio-controller:silent-watchdog",
+                    this.audio,
+                    { ctxState: this.audioContext?.state ?? null },
+                );
+                this.audio.pause();
+                this.emit("needs-resume");
+            }
+        }, this.SILENT_PLAYBACK_TIMEOUT_MS);
+    }
+
+    private cancelSilentPlaybackWatchdog(): void {
+        if (this.silentPlaybackTimeout) {
+            clearTimeout(this.silentPlaybackTimeout);
+            this.silentPlaybackTimeout = null;
+        }
+    }
+
     async play(): Promise<void> {
         iosAudioLog("play:entry", "audio-controller:play", this.audio);
         if (!this.audio.src) return;
 
         this.setAudioSessionPlayback();
-        this.setupAudioContextBridge();
+        const ctxState = await this.setupAudioContextBridge();
+        if (ctxState && ctxState !== "running") {
+            iosAudioLog(
+                "play:context-not-running",
+                "audio-controller:play",
+                this.audio,
+                { state: ctxState },
+            );
+            this.emit("needs-resume");
+            return;
+        }
 
         try {
             await this.audio.play();
+            this.startSilentPlaybackWatchdog();
         } catch (err) {
             if (err instanceof DOMException && err.name === "AbortError") {
                 iosAudioLog("play:abort-error", "audio-controller:play", this.audio);
@@ -363,7 +442,7 @@ export class AudioController {
             }
             if (err instanceof DOMException && err.name === "NotAllowedError") {
                 iosAudioLog("play:not-allowed", "audio-controller:play", this.audio);
-                // User gesture required — emit needs-resume so UI can prompt
+                // User gesture required -- emit needs-resume so UI can prompt
                 this.emit("needs-resume");
                 return;
             }
@@ -377,10 +456,23 @@ export class AudioController {
         if (!this.audio.paused) return true;
 
         this.setAudioSessionPlayback();
-        this.setupAudioContextBridge();
+        const ctxState = await this.setupAudioContextBridge();
+        if (ctxState && ctxState !== "running") {
+            iosAudioLog(
+                "tryResume:context-not-running",
+                "audio-controller:tryResume",
+                this.audio,
+                { state: ctxState },
+            );
+            if (this.currentSrc) {
+                this.emit("needs-resume");
+            }
+            return false;
+        }
 
         try {
             await this.audio.play();
+            this.startSilentPlaybackWatchdog();
             return true;
         } catch {
             if (this.currentSrc) {
@@ -392,6 +484,7 @@ export class AudioController {
 
     pause(): void {
         this.autoResumeAfterRecovery = false;
+        this.cancelSilentPlaybackWatchdog();
         this.audio.pause();
     }
 
@@ -464,9 +557,12 @@ export class AudioController {
         this.cancelNetworkRetry();
         this.stopWatchdog();
         this.cancelStallGrace();
+        this.cancelSilentPlaybackWatchdog();
         this.currentSrc = src;
         this.audio.src = src;
-        this.audio.play().catch((err) => {
+        this.audio.play().then(() => {
+            this.startSilentPlaybackWatchdog();
+        }).catch((err) => {
             if (err instanceof DOMException && err.name === "NotAllowedError") {
                 this.emit("needs-resume");
                 return;
@@ -626,6 +722,7 @@ export class AudioController {
         this.cancelNetworkRetry();
         this.stopWatchdog();
         this.cancelStallGrace();
+        this.cancelSilentPlaybackWatchdog();
         this.clearReloadFailsafe();
         this.audio.pause();
         this.audio.removeAttribute("src");
