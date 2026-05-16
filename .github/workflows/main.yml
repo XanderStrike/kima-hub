@@ -1,9 +1,15 @@
-name: PR Checks
+name: Main CI
 
 on:
-    pull_request:
+    push:
         branches: [main]
-        types: [opened, synchronize, reopened]
+
+concurrency:
+    group: main-ci
+    cancel-in-progress: true
+
+env:
+    IMAGE_NAME: ${{ secrets.DOCKERHUB_USERNAME }}/kima
 
 jobs:
     lint-frontend:
@@ -11,19 +17,14 @@ jobs:
         runs-on: ubuntu-latest
         steps:
             - uses: actions/checkout@v4
-
             - uses: actions/setup-node@v4
               with:
                   node-version: "22"
                   cache: "npm"
                   cache-dependency-path: frontend/package-lock.json
-
-            - name: Install dependencies
-              working-directory: frontend
+            - working-directory: frontend
               run: npm ci
-
-            - name: Run ESLint
-              working-directory: frontend
+            - working-directory: frontend
               run: npm run lint
 
     typecheck:
@@ -31,27 +32,21 @@ jobs:
         runs-on: ubuntu-latest
         steps:
             - uses: actions/checkout@v4
-
             - uses: actions/setup-node@v4
               with:
                   node-version: "22"
                   cache: "npm"
                   cache-dependency-path: frontend/package-lock.json
-
-            - name: Typecheck frontend
-              working-directory: frontend
+            - working-directory: frontend
               run: |
                   npm ci
                   npm run typecheck
-
             - uses: actions/setup-node@v4
               with:
                   node-version: "22"
                   cache: "npm"
                   cache-dependency-path: backend/package-lock.json
-
-            - name: Typecheck backend
-              working-directory: backend
+            - working-directory: backend
               run: |
                   npm ci
                   npm run typecheck
@@ -61,40 +56,57 @@ jobs:
         runs-on: ubuntu-latest
         steps:
             - uses: actions/checkout@v4
-
             - uses: actions/setup-node@v4
               with:
                   node-version: "22"
                   cache: "npm"
                   cache-dependency-path: backend/package-lock.json
-
-            - name: Install dependencies
-              working-directory: backend
+            - working-directory: backend
               run: npm ci
-
-            - name: Run Jest
-              working-directory: backend
-              # Exclude webhookEventStore -- it is an integration test requiring
-              # a live PostgreSQL database. It runs in integration.yml instead.
+            - working-directory: backend
               run: npm test -- --passWithNoTests --testPathIgnorePatterns="webhookEventStore"
               env:
                   SETTINGS_ENCRYPTION_KEY: test-key-not-real-but-needed-for-ci
 
-    build-docker:
-        name: Docker Build Check
+    build-and-push:
+        name: Build & Push Docker Image
         runs-on: ubuntu-latest
         needs: [lint-frontend, typecheck, unit-tests]
         steps:
             - uses: actions/checkout@v4
 
+            - name: Free up disk space
+              run: |
+                  sudo rm -rf /usr/share/dotnet
+                  sudo rm -rf /opt/ghc
+                  sudo rm -rf /usr/local/share/boost
+                  sudo rm -rf "$AGENT_TOOLSDIRECTORY"
+
+            - name: Set up QEMU
+              uses: docker/setup-qemu-action@v3
+
             - name: Set up Docker Buildx
               uses: docker/setup-buildx-action@v3
 
-            - name: Build Docker image (no push)
+            - name: Login to Docker Hub
+              uses: docker/login-action@v3
+              with:
+                  username: ${{ secrets.DOCKERHUB_USERNAME }}
+                  password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+            - name: Get short SHA
+              id: sha
+              run: echo "short=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
+
+            - name: Build and push
               uses: docker/build-push-action@v5
               with:
                   context: .
-                  push: false
-                  tags: kima:pr-check
+                  file: ./Dockerfile
+                  push: true
+                  tags: |
+                      ${{ env.IMAGE_NAME }}:latest
+                      ${{ env.IMAGE_NAME }}:${{ steps.sha.outputs.short }}
                   cache-from: type=gha
                   cache-to: type=gha,mode=max
+                  platforms: linux/amd64,linux/arm64
