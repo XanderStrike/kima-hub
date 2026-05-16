@@ -578,6 +578,11 @@ model SystemSettings {
   registrationOpen            Boolean  @default(false)
   lidarrQualityProfileId      Int?
   lidarrMetadataProfileId     Int?
+
+  // GazelleUI
+  gazelleUiEnabled            Boolean  @default(false)
+  gazelleUiUrl                String?  @default("http://localhost:2020")
+  gazelleUiApiKey             String?
 }
 
 model Track {

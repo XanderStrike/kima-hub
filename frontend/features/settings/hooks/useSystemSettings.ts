@@ -30,6 +30,10 @@ const defaultSystemSettings: SystemSettings = {
     soulseekConcurrentDownloads: 4,
     lidarrQualityProfileId: null,
     lidarrMetadataProfileId: null,
+    // GazelleUI
+    gazelleUiEnabled: false,
+    gazelleUiUrl: "http://localhost:2020",
+    gazelleUiApiKey: "",
     // Download preferences
     downloadSource: "soulseek",
     primaryFailureFallback: "none",
@@ -152,6 +156,12 @@ export function useSystemSettings() {
                     result = await api.testSpotify(
                         systemSettings.spotifyClientId,
                         systemSettings.spotifyClientSecret
+                    );
+                    break;
+                case "gazelleui":
+                    result = await api.testGazelleui(
+                        systemSettings.gazelleUiUrl,
+                        systemSettings.gazelleUiApiKey
                     );
                     break;
                 default:

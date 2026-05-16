@@ -5,6 +5,7 @@ import { prisma } from "../utils/db";
 import { config } from "../config";
 import { getSystemSettings } from "../utils/systemSettings";
 import { lidarrService } from "../services/lidarr";
+import { gazelleUIService } from "../services/gazelleui";
 import { musicBrainzService } from "../services/musicbrainz";
 import { lastFmService } from "../services/lastfm";
 import { simpleDownloadManager } from "../services/simpleDownloadManager";
@@ -118,11 +119,12 @@ router.post("/", async (req, res) => {
             });
         }
 
-        // Check if Lidarr is enabled (database or .env)
+        // Check if at least one download service is available
         const lidarrEnabled = await lidarrService.isEnabled();
-        if (!lidarrEnabled) {
+        const gazelleuiEnabled = await gazelleUIService.isEnabled();
+        if (!lidarrEnabled && !gazelleuiEnabled) {
             return res.status(400).json({
-                error: "Lidarr not configured. Please add albums manually to your library.",
+                error: "No download service configured. Enable Lidarr or GazelleUI in settings.",
             });
         }
 
@@ -340,19 +342,23 @@ async function processArtistDownload(
     }
 
     try {
-        // First, add the artist to Lidarr (this monitors all albums)
-        const lidarrArtist = await lidarrService.addArtist(
-            artistMbid,
-            canonicalArtistName,
-            rootFolderPath
-        );
+        const lidarrEnabled = await lidarrService.isEnabled();
 
-        if (!lidarrArtist) {
-            logger.debug(`   Failed to add artist to Lidarr`);
-            throw new Error("Failed to add artist to Lidarr");
+        if (lidarrEnabled) {
+            // Lidarr path: add artist to Lidarr for monitoring
+            const lidarrArtist = await lidarrService.addArtist(
+                artistMbid,
+                canonicalArtistName,
+                rootFolderPath
+            );
+
+            if (!lidarrArtist) {
+                logger.debug(`   Failed to add artist to Lidarr`);
+                throw new Error("Failed to add artist to Lidarr");
+            }
+
+            logger.debug(`   Artist added to Lidarr (ID: ${lidarrArtist.id})`);
         }
-
-        logger.debug(`   Artist added to Lidarr (ID: ${lidarrArtist.id})`);
 
         // Fetch albums from MusicBrainz
         const releaseGroups = await musicBrainzService.getReleaseGroups(
@@ -533,7 +539,56 @@ async function processDownload(
 
         logger.debug(`Parsed: Artist="${parsedArtist}", Album="${parsedAlbum}"`);
 
-        // Use simple download manager for album downloads
+        // Use GazelleUI if Lidarr isn't available but GazelleUI is
+        const lidarrEnabled = await lidarrService.isEnabled();
+        const gazelleuiEnabled = await gazelleUIService.isEnabled();
+
+        if (!lidarrEnabled && gazelleuiEnabled) {
+            // Use GazelleUI for album download
+            try {
+                const result = await gazelleUIService.downloadAlbum(parsedArtist, parsedAlbum);
+                if (result) {
+                    const currentJob = await prisma.downloadJob.findUnique({
+                        where: { id: jobId },
+                        select: { metadata: true },
+                    });
+                    await prisma.downloadJob.update({
+                        where: { id: jobId },
+                        data: {
+                            status: "processing",
+                            metadata: {
+                                ...((currentJob?.metadata as any) || {}),
+                                gazelleuiDownloadId: result.download.id,
+                                gazelleuiTorrentId: result.torrentId,
+                                currentSource: "gazelleui",
+                            },
+                        },
+                    });
+                    logger.debug(`[GazelleUI] Queued torrent ${result.torrentId} for: ${parsedArtist} - ${parsedAlbum}`);
+                } else {
+                    await prisma.downloadJob.update({
+                        where: { id: jobId },
+                        data: {
+                            status: "failed",
+                            error: "No matching torrent found on tracker",
+                            completedAt: new Date(),
+                        },
+                    });
+                }
+            } catch (error: any) {
+                await prisma.downloadJob.update({
+                    where: { id: jobId },
+                    data: {
+                        status: "failed",
+                        error: error.message || "GazelleUI download failed",
+                        completedAt: new Date(),
+                    },
+                });
+            }
+            return;
+        }
+
+        // Use simple download manager (Lidarr) for album downloads
         const result = await simpleDownloadManager.startDownload(
             jobId,
             parsedArtist,

@@ -17,6 +17,10 @@ export interface SystemSettings {
     lidarrApiKey: string;
     lidarrQualityProfileId: number | null;
     lidarrMetadataProfileId: number | null;
+    // GazelleUI
+    gazelleUiEnabled: boolean;
+    gazelleUiUrl: string;
+    gazelleUiApiKey: string;
     // AI Services
     openaiEnabled: boolean;
     openaiApiKey: string;
@@ -45,8 +49,8 @@ export interface SystemSettings {
     audioAnalyzerWorkers: number;
     soulseekConcurrentDownloads: number;
     // Download Preferences
-    downloadSource: "soulseek" | "lidarr";
-    primaryFailureFallback: "none" | "lidarr" | "soulseek";
+    downloadSource: "soulseek" | "lidarr" | "gazelleui";
+    primaryFailureFallback: "none" | "lidarr" | "soulseek" | "gazelleui";
     // Server
     publicUrl: string;
 }

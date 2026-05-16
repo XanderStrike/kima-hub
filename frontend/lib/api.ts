@@ -839,6 +839,13 @@ class ApiClient {
         });
     }
 
+    async testGazelleui(url: string, apiKey: string) {
+        return this.request<ServiceTestResult>("/system-settings/test-gazelleui", {
+            method: "POST",
+            body: JSON.stringify({ url, apiKey }),
+        });
+    }
+
     // Downloads (Lidarr)
     async downloadAlbum(
         artistName: string,

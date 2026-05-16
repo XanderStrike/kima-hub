@@ -22,22 +22,30 @@ export function DownloadPreferencesSection({
         settings.soulseekUsername.trim() !== "" &&
         settings.soulseekPassword.trim() !== "";
 
-    const areBothServicesConfigured = isLidarrConfigured && isSoulseekConfigured;
-    const isDisabled = !areBothServicesConfigured;
+    const isGazelleuiConfigured =
+        settings.gazelleUiEnabled === true &&
+        settings.gazelleUiUrl.trim() !== "" &&
+        settings.gazelleUiApiKey.trim() !== "";
+
+    const areAnyTwoServicesConfigured =
+        (isLidarrConfigured ? 1 : 0) +
+        (isSoulseekConfigured ? 1 : 0) +
+        (isGazelleuiConfigured ? 1 : 0) >= 2;
+    const isDisabled = !areAnyTwoServicesConfigured;
 
     // Dynamic fallback options based on primary source
     const getFallbackOptions = () => {
-        if (settings.downloadSource === "soulseek") {
-            return [
-                { value: "none", label: "Skip track" },
-                { value: "lidarr", label: "Download full album via Lidarr" },
-            ];
-        } else {
-            return [
-                { value: "none", label: "Skip album" },
-                { value: "soulseek", label: "Try Soulseek for individual tracks" },
-            ];
+        const options = [{ value: "none", label: "Skip" }];
+        if (settings.downloadSource !== "lidarr" && isLidarrConfigured) {
+            options.push({ value: "lidarr", label: "Download full album via Lidarr" });
         }
+        if (settings.downloadSource !== "soulseek" && isSoulseekConfigured) {
+            options.push({ value: "soulseek", label: "Try Soulseek for individual tracks" });
+        }
+        if (settings.downloadSource !== "gazelleui" && isGazelleuiConfigured) {
+            options.push({ value: "gazelleui", label: "Download via GazelleUI" });
+        }
+        return options;
     };
 
     return (
@@ -50,7 +58,7 @@ export function DownloadPreferencesSection({
                 label="Primary Download Source"
                 description={
                     isDisabled
-                        ? "Requires both Soulseek and Lidarr to be configured"
+                        ? "Requires at least two download sources to be configured"
                         : "Choose how to download music for imported playlists"
                 }
             >
@@ -58,13 +66,14 @@ export function DownloadPreferencesSection({
                     value={settings.downloadSource || "soulseek"}
                     onChange={(v) =>
                         onUpdate({
-                            downloadSource: v as "soulseek" | "lidarr",
+                            downloadSource: v as "soulseek" | "lidarr" | "gazelleui",
                             primaryFailureFallback: "none"
                         })
                     }
                     options={[
                         { value: "soulseek", label: "Soulseek (Per-track)" },
                         { value: "lidarr", label: "Lidarr (Full albums)" },
+                        ...(isGazelleuiConfigured ? [{ value: "gazelleui", label: "GazelleUI (Tracker)" }] : []),
                     ]}
                     disabled={isDisabled}
                 />
@@ -78,9 +87,11 @@ export function DownloadPreferencesSection({
                 }
                 description={
                     isDisabled
-                        ? "Requires both Soulseek and Lidarr to be configured"
+                        ? "Requires at least two download sources to be configured"
                         : settings.downloadSource === "soulseek"
                         ? "What to do if a track can't be found on Soulseek"
+                        : settings.downloadSource === "gazelleui"
+                        ? "What to do if an album can't be found on GazelleUI"
                         : "What to do if an album can't be found on Lidarr"
                 }
             >
@@ -88,7 +99,7 @@ export function DownloadPreferencesSection({
                     value={settings.primaryFailureFallback || "none"}
                     onChange={(v) =>
                         onUpdate({
-                            primaryFailureFallback: v as "none" | "lidarr" | "soulseek",
+                            primaryFailureFallback: v as "none" | "lidarr" | "soulseek" | "gazelleui",
                         })
                     }
                     options={getFallbackOptions()}

@@ -12,6 +12,7 @@ import { soulseekService } from "./soulseek";
 import { simpleDownloadManager } from "./simpleDownloadManager";
 import { musicBrainzService } from "./musicbrainz";
 import { lastFmService } from "./lastfm";
+import { gazelleUIService } from "./gazelleui";
 import { AcquisitionError, AcquisitionErrorType } from "./lidarr";
 import { distributedLock } from "../utils/distributedLock";
 import PQueue from "p-queue";
@@ -61,7 +62,7 @@ export interface TrackAcquisitionRequest {
 export interface AcquisitionResult {
     success: boolean;
     downloadJobId?: string;
-    source?: "soulseek" | "lidarr";
+    source?: "soulseek" | "lidarr" | "gazelleui";
     error?: string;
     errorType?: AcquisitionErrorType;
     isRecoverable?: boolean;
@@ -75,9 +76,9 @@ export interface AcquisitionResult {
  */
 interface DownloadBehavior {
     hasPrimarySource: boolean;
-    primarySource: "soulseek" | "lidarr" | null;
+    primarySource: "soulseek" | "lidarr" | "gazelleui" | null;
     hasFallbackSource: boolean;
-    fallbackSource: "soulseek" | "lidarr" | null;
+    fallbackSource: "soulseek" | "lidarr" | "gazelleui" | null;
 }
 
 class AcquisitionService {
@@ -127,9 +128,16 @@ class AcquisitionService {
             settings?.lidarrUrl &&
             settings?.lidarrApiKey
         );
+        const hasGazelleUI = await gazelleUIService.isEnabled();
+
+        // Collect available sources
+        const availableSources: Array<"soulseek" | "lidarr" | "gazelleui"> = [];
+        if (hasSoulseek) availableSources.push("soulseek");
+        if (hasLidarr) availableSources.push("lidarr");
+        if (hasGazelleUI) availableSources.push("gazelleui");
 
         // Case 1: No sources available
-        if (!hasSoulseek && !hasLidarr) {
+        if (availableSources.length === 0) {
             logger.error("[Acquisition] No download sources configured");
             return {
                 hasPrimarySource: false,
@@ -140,53 +148,53 @@ class AcquisitionService {
         }
 
         // Case 2: Only one source available - use it regardless of preference
-        if (hasSoulseek && !hasLidarr) {
-            logger.debug("[Acquisition] Source config: primary=soulseek, fallback=none (only source)");
+        if (availableSources.length === 1) {
+            const source = availableSources[0];
+            logger.debug(`[Acquisition] Source config: primary=${source}, fallback=none (only source)`);
             return {
                 hasPrimarySource: true,
-                primarySource: "soulseek",
+                primarySource: source,
                 hasFallbackSource: false,
                 fallbackSource: null,
             };
         }
 
-        if (hasLidarr && !hasSoulseek) {
-            logger.debug("[Acquisition] Source config: primary=lidarr, fallback=none (only source)");
-            return {
-                hasPrimarySource: true,
-                primarySource: "lidarr",
-                hasFallbackSource: false,
-                fallbackSource: null,
-            };
-        }
+        // Case 3: Multiple available - respect user preference for primary
+        const userPrimary = downloadSource as "soulseek" | "lidarr" | "gazelleui";
 
-        // Case 3: Both available - respect user preference for primary
-        const userPrimary = downloadSource; // "soulseek" or "lidarr"
-        const alternative = userPrimary === "soulseek" ? "lidarr" : "soulseek";
+        // If user's preferred source isn't available, pick the first available
+        const primarySource = availableSources.includes(userPrimary)
+            ? userPrimary
+            : availableSources[0];
 
-        // Auto-enable fallback if both sources are configured and no explicit setting
-        let useFallback =
-            primaryFailureFallback !== "none" &&
-            primaryFailureFallback === alternative;
+        // Fallback: auto-enable if both sources are configured and no explicit "none" setting
+        let fallbackSource: "soulseek" | "lidarr" | "gazelleui" | null = null;
 
-        // Only auto-enable fallback if the setting is truly undefined/null (first-time users)
-        // "none" = explicit "Skip Track" choice, respect it (Fixes #68)
-        if (!useFallback && (primaryFailureFallback === undefined || primaryFailureFallback === null)) {
-            useFallback = true;
-            logger.debug(
-                `[Acquisition] Auto-enabled fallback: ${alternative} (both sources configured)`
-            );
+        if (primaryFailureFallback && primaryFailureFallback !== "none") {
+            const fallback = primaryFailureFallback as "soulseek" | "lidarr" | "gazelleui";
+            if (availableSources.includes(fallback)) {
+                fallbackSource = fallback;
+            }
+        } else if (primaryFailureFallback === undefined || primaryFailureFallback === null) {
+            // Auto-enable first alternative as fallback
+            const alternatives = availableSources.filter((s) => s !== primarySource);
+            if (alternatives.length > 0) {
+                fallbackSource = alternatives[0];
+                logger.debug(
+                    `[Acquisition] Auto-enabled fallback: ${fallbackSource} (multiple sources configured)`
+                );
+            }
         }
 
         logger.debug(
-            `[Acquisition] Source config: primary=${userPrimary}, fallback=${useFallback ? alternative : "none"}`
+            `[Acquisition] Source config: primary=${primarySource}, fallback=${fallbackSource || "none"}`
         );
 
         return {
             hasPrimarySource: true,
-            primarySource: userPrimary,
-            hasFallbackSource: useFallback,
-            fallbackSource: useFallback ? alternative : null,
+            primarySource,
+            hasFallbackSource: fallbackSource !== null,
+            fallbackSource,
         };
     }
 
@@ -196,7 +204,7 @@ class AcquisitionService {
      */
     private async updateJobStatusText(
         jobId: string,
-        source: "lidarr" | "soulseek",
+        source: "lidarr" | "soulseek" | "gazelleui",
         attemptNumber: number
     ): Promise<void> {
         const sourceLabel = source.charAt(0).toUpperCase() + source.slice(1);
@@ -222,6 +230,10 @@ class AcquisitionService {
                         source === "soulseek"
                             ? attemptNumber
                             : existingMetadata.soulseekAttempts || 0,
+                    gazelleuiAttempts:
+                        source === "gazelleui"
+                            ? attemptNumber
+                            : existingMetadata.gazelleuiAttempts || 0,
                     statusText,
                 },
             },
@@ -302,16 +314,17 @@ class AcquisitionService {
             settings?.lidarrUrl &&
             settings?.lidarrApiKey
         );
+        const gazelleuiAvailable = await gazelleUIService.isEnabled();
 
-        if (!soulseekAvailable && !lidarrAvailable) {
+        if (!soulseekAvailable && !lidarrAvailable && !gazelleuiAvailable) {
             throw new ConfigurationError(
-                'No download sources configured. Please configure Soulseek or Lidarr in settings.'
+                'No download sources configured. Please configure Soulseek, Lidarr, or GazelleUI in settings.'
             );
         }
 
-        // MBID only required when Soulseek is unavailable (Lidarr needs it)
-        if (!request.mbid && !soulseekAvailable) {
-            throw new UserFacingError('Album MBID is required when Soulseek is not available', 400, 'INVALID_INPUT');
+        // MBID only required when neither Soulseek nor GazelleUI is available (Lidarr needs it)
+        if (!request.mbid && !soulseekAvailable && !gazelleuiAvailable) {
+            throw new UserFacingError('Album MBID is required when neither Soulseek nor GazelleUI is available', 400, 'INVALID_INPUT');
         }
 
         // Verify artist name before acquisition
@@ -339,70 +352,41 @@ class AcquisitionService {
         let result: AcquisitionResult;
 
         try {
-            if (behavior.primarySource === "soulseek") {
-                logger.debug(`[Acquisition] Trying primary: Soulseek`);
-                result = await this.acquireAlbumViaSoulseek(request, context);
-
-                // Fallback to Lidarr if Soulseek fails and fallback is configured
-                if (!result.success) {
-                    logger.debug(
-                        `[Acquisition] Soulseek failed: ${result.error || "unknown error"}`
-                    );
-                    logger.debug(
-                        `[Acquisition] Fallback available: hasFallback=${behavior.hasFallbackSource}, source=${behavior.fallbackSource}`
-                    );
-
-                    if (
-                        behavior.hasFallbackSource &&
-                        behavior.fallbackSource === "lidarr" &&
-                        request.mbid
-                    ) {
-                        logger.debug(
-                            `[Acquisition] Attempting Lidarr fallback...`
-                        );
-                        result = await this.acquireAlbumViaLidarr(request, context);
-                    } else {
-                        logger.debug(
-                            `[Acquisition] No fallback configured or fallback not Lidarr`
-                        );
-                    }
-                }
-            } else if (behavior.primarySource === "lidarr") {
-                if (!request.mbid) {
-                    // No MBID -- Lidarr requires it, skip directly to Soulseek
-                    logger.info(`[Acquisition] No MBID for "${request.albumTitle}", skipping Lidarr, trying Soulseek directly`);
-                    result = await this.acquireAlbumViaSoulseek(request, context);
+            // Source-specific pre-checks
+            if (behavior.primarySource === "lidarr" && !request.mbid) {
+                // No MBID -- Lidarr requires it, skip directly to fallback
+                logger.info(`[Acquisition] No MBID for "${request.albumTitle}", skipping Lidarr, trying fallback`);
+                if (behavior.hasFallbackSource) {
+                    result = await this.acquireAlbumViaSource(behavior.fallbackSource!, request, context);
                 } else {
-                    logger.debug(`[Acquisition] Trying primary: Lidarr`);
-                    result = await this.acquireAlbumViaLidarr(request, context);
-
-                    // Fallback to Soulseek if Lidarr fails and fallback is configured
-                    if (!result.success) {
-                        logger.debug(
-                            `[Acquisition] Lidarr failed: ${result.error || "unknown error"}`
-                        );
-                        logger.debug(
-                            `[Acquisition] Fallback available: hasFallback=${behavior.hasFallbackSource}, source=${behavior.fallbackSource}`
-                        );
-
-                        if (
-                            behavior.hasFallbackSource &&
-                            behavior.fallbackSource === "soulseek"
-                        ) {
-                            logger.debug(
-                                `[Acquisition] Attempting Soulseek fallback...`
-                            );
-                            result = await this.acquireAlbumViaSoulseek(request, context);
-                        } else {
-                            logger.debug(
-                                `[Acquisition] No fallback configured or fallback not Soulseek`
-                            );
-                        }
-                    }
+                    result = { success: false, error: "Album MBID required for Lidarr download" };
+                }
+            } else if (behavior.primarySource === "gazelleui" && !request.mbid && !request.artistName) {
+                // GazelleUI needs at least artist name to search
+                if (behavior.hasFallbackSource) {
+                    result = await this.acquireAlbumViaSource(behavior.fallbackSource!, request, context);
+                } else {
+                    result = { success: false, error: "Artist name required for GazelleUI download" };
                 }
             } else {
-                // This should never happen due to validation above
-                throw new ConfigurationError("No primary source configured");
+                logger.debug(`[Acquisition] Trying primary: ${behavior.primarySource}`);
+                result = await this.acquireAlbumViaSource(behavior.primarySource!, request, context);
+
+                // Fallback if primary failed
+                if (!result.success && behavior.hasFallbackSource) {
+                    logger.debug(
+                        `[Acquisition] ${behavior.primarySource} failed: ${result.error || "unknown error"}`
+                    );
+
+                    // Some fallback sources require MBID
+                    const fallbackRequiresMbid = behavior.fallbackSource === "lidarr";
+                    if (fallbackRequiresMbid && !request.mbid) {
+                        logger.debug(`[Acquisition] Skipping ${behavior.fallbackSource} fallback (no MBID)`);
+                    } else {
+                        logger.debug(`[Acquisition] Attempting ${behavior.fallbackSource} fallback...`);
+                        result = await this.acquireAlbumViaSource(behavior.fallbackSource!, request, context);
+                    }
+                }
             }
         } catch (error) {
             if (error instanceof IntegrationError && error.retryable) {
@@ -832,6 +816,108 @@ class AcquisitionService {
      * @param context - Tracking context
      * @returns Created or existing download job
      */
+    /**
+     * Dispatch album acquisition to the appropriate source
+     */
+    private async acquireAlbumViaSource(
+        source: "soulseek" | "lidarr" | "gazelleui",
+        request: AlbumAcquisitionRequest,
+        context: AcquisitionContext
+    ): Promise<AcquisitionResult> {
+        switch (source) {
+            case "soulseek":
+                return this.acquireAlbumViaSoulseek(request, context);
+            case "lidarr":
+                return this.acquireAlbumViaLidarr(request, context);
+            case "gazelleui":
+                return this.acquireAlbumViaGazelleUI(request, context);
+        }
+    }
+
+    /**
+     * Acquire album via GazelleUI (private tracker download)
+     * Searches for the album on the tracker and queues the best match
+     *
+     * @param request - Album to acquire
+     * @param context - Tracking context
+     * @returns Acquisition result
+     */
+    private async acquireAlbumViaGazelleUI(
+        request: AlbumAcquisitionRequest,
+        context: AcquisitionContext
+    ): Promise<AcquisitionResult> {
+        logger.debug(
+            `[Acquisition/GazelleUI] Downloading: ${request.artistName} - ${request.albumTitle}`
+        );
+
+        let job: any;
+        try {
+            // Create download job for tracking
+            job = await this.createDownloadJob(request, context);
+
+            // Update status text
+            const jobMetadata = (job.metadata as any) || {};
+            const gazelleuiAttempts = (jobMetadata.gazelleuiAttempts || 0) + 1;
+            await this.updateJobStatusText(job.id, "gazelleui", gazelleuiAttempts);
+
+            // Search for the album and queue the best torrent
+            const result = await gazelleUIService.downloadAlbum(
+                request.artistName,
+                request.albumTitle
+            );
+
+            if (!result) {
+                logger.debug(
+                    `[Acquisition/GazelleUI] No matching torrent found for: ${request.artistName} - ${request.albumTitle}`
+                );
+                await this.updateJobStatus(job.id, "failed", "No matching torrent found on tracker");
+                return {
+                    success: false,
+                    error: "No matching torrent found on tracker",
+                    errorType: AcquisitionErrorType.NO_RELEASES_AVAILABLE,
+                    isRecoverable: true,
+                };
+            }
+
+            logger.debug(
+                `[Acquisition/GazelleUI] Queued torrent ${result.torrentId} for: ${request.artistName} - ${request.albumTitle}`
+            );
+
+            // Update job metadata with GazelleUI tracking info
+            const currentJob = await prisma.downloadJob.findUnique({
+                where: { id: job.id },
+                select: { metadata: true },
+            });
+            await prisma.downloadJob.update({
+                where: { id: job.id },
+                data: {
+                    status: "processing",
+                    metadata: {
+                        ...((currentJob?.metadata as any) || {}),
+                        gazelleuiDownloadId: result.download.id,
+                        gazelleuiTorrentId: result.torrentId,
+                        currentSource: "gazelleui",
+                        gazelleuiAttempts,
+                    },
+                },
+            });
+
+            return {
+                success: true,
+                source: "gazelleui",
+                downloadJobId: job.id,
+            };
+        } catch (error: any) {
+            logger.error(`[Acquisition/GazelleUI] Error: ${error.message}`);
+            if (job) {
+                await this.updateJobStatus(job.id, "failed", error.message).catch((e) =>
+                    logger.error(`[Acquisition/GazelleUI] Failed to update job status: ${e.message}`)
+                );
+            }
+            return { success: false, error: error.message };
+        }
+    }
+
     private async createDownloadJob(
         request: AlbumAcquisitionRequest,
         context: AcquisitionContext

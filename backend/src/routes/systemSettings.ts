@@ -94,9 +94,14 @@ const systemSettingsSchema = z.object({
   transcodeCacheMaxGb: z.number().optional(),
   soulseekConcurrentDownloads: z.number().min(1).max(10).optional(),
 
+  // GazelleUI
+  gazelleUiEnabled: z.boolean().optional(),
+  gazelleUiUrl: z.string().optional(),
+  gazelleUiApiKey: z.string().nullable().optional(),
+
   // Download Preferences
-  downloadSource: z.enum(["soulseek", "lidarr"]).optional(),
-  primaryFailureFallback: z.enum(["none", "lidarr", "soulseek"]).optional(),
+  downloadSource: z.enum(["soulseek", "lidarr", "gazelleui"]).optional(),
+  primaryFailureFallback: z.enum(["none", "lidarr", "soulseek", "gazelleui"]).optional(),
 
   // Server
   publicUrl: z.union([z.string().url(), z.literal("")]).optional(),
@@ -148,6 +153,7 @@ router.get("/", async (req, res) => {
       audiobookshelfApiKey: safeDecrypt(settings.audiobookshelfApiKey),
       soulseekPassword: safeDecrypt(settings.soulseekPassword),
       spotifyClientSecret: safeDecrypt(settings.spotifyClientSecret),
+      gazelleUiApiKey: safeDecrypt(settings.gazelleUiApiKey),
     };
 
     res.json(decryptedSettings);
@@ -191,6 +197,8 @@ router.post("/", async (req, res) => {
       encryptedData.soulseekPassword = encrypt(data.soulseekPassword);
     if (data.spotifyClientSecret)
       encryptedData.spotifyClientSecret = encrypt(data.spotifyClientSecret);
+    if (data.gazelleUiApiKey)
+      encryptedData.gazelleUiApiKey = encrypt(data.gazelleUiApiKey);
 
     // Fetch existing settings before save to detect credential changes
     const existingSettings = await prisma.systemSettings.findUnique({ where: { id: "default" } });
@@ -263,6 +271,13 @@ router.post("/", async (req, res) => {
       fanartService.reinitialize();
     } catch (err) {
       logger.warn("[SYSTEM SETTINGS] Could not reinitialize Fanart service:", err);
+    }
+
+    try {
+      const { gazelleUIService } = await import("../services/gazelleui");
+      gazelleUIService.reinitialize();
+    } catch (err) {
+      logger.warn("[SYSTEM SETTINGS] Could not reinitialize GazelleUI service:", err);
     }
 
     // If Audiobookshelf was disabled, clear all audiobook-related data
@@ -733,6 +748,32 @@ router.post("/test-spotify", async (req, res) => {
     }
   } catch (error) {
     safeError(res, "Spotify credentials test", error);
+  }
+});
+
+// Test GazelleUI connection
+router.post("/test-gazelleui", async (req, res) => {
+  try {
+    const { url, apiKey } = req.body;
+
+    if (!url || !apiKey) {
+      return res.status(400).json({ error: "URL and API key are required" });
+    }
+
+    const normalizedUrl = url.replace(/\/+$/, "");
+
+    const axios = require("axios");
+    const response = await axios.get(`${normalizedUrl}/api/v1/downloads?limit=1`, {
+      headers: { Authorization: `Bearer ${apiKey}` },
+      timeout: 10000,
+    });
+
+    res.json({
+      success: true,
+      message: "GazelleUI connection successful",
+    });
+  } catch (error) {
+    safeError(res, "GazelleUI connection test", error);
   }
 });
 
