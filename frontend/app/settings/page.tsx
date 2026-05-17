@@ -16,8 +16,7 @@ import { AccountSection } from "@/features/settings/components/sections/AccountS
 import { SubsonicSection } from "@/features/settings/components/sections/SubsonicSection";
 import { PlaybackSection } from "@/features/settings/components/sections/PlaybackSection";
 import { DownloadPreferencesSection } from "@/features/settings/components/sections/DownloadPreferencesSection";
-import { LidarrSection } from "@/features/settings/components/sections/LidarrSection";
-import { GazelleUISection } from "@/features/settings/components/sections/GazelleUISection";
+import { DownloadServicesSection } from "@/features/settings/components/sections/DownloadServicesSection";
 import { AudiobookshelfSection } from "@/features/settings/components/sections/AudiobookshelfSection";
 import { SoulseekSection } from "@/features/settings/components/sections/SoulseekSection";
 import { AIServicesSection } from "@/features/settings/components/sections/AIServicesSection";
@@ -32,8 +31,7 @@ const sidebarItems: SidebarItem[] = [
     { id: "subsonic", label: "Native Apps" },
     { id: "playback", label: "Playback" },
     { id: "download-preferences", label: "Download Preferences", adminOnly: true },
-    { id: "lidarr", label: "Download Services", adminOnly: true },
-    { id: "gazelleui", label: "GazelleUI", adminOnly: true },
+    { id: "download-services", label: "Download Services", adminOnly: true },
     { id: "audiobookshelf", label: "Media Servers", adminOnly: true },
     { id: "soulseek", label: "P2P Networks", adminOnly: true },
     { id: "ai-services", label: "Artwork", adminOnly: true },
@@ -157,20 +155,12 @@ export default function SettingsPage() {
                             onUpdate={updateSystemSettings}
                         />
 
-                        {/* Download Services - Lidarr */}
-                        <LidarrSection
+                        {/* Download Services - Lidarr & GazelleUI */}
+                        <DownloadServicesSection
                             settings={systemSettings}
                             onUpdate={updateSystemSettings}
                             onTest={handleTestService}
-                            isTesting={testingServices.lidarr || false}
-                        />
-
-                        {/* GazelleUI */}
-                        <GazelleUISection
-                            settings={systemSettings}
-                            onUpdate={updateSystemSettings}
-                            onTest={handleTestService}
-                            isTesting={testingServices.gazelleui || false}
+                            isTesting={testingServices}
                         />
 
                         {/* Media Servers - Audiobookshelf */}
