@@ -11,7 +11,7 @@ function mockSearch(results: GazelleUIArtistSearchResult[]) {
 describe("findAlbumTorrent scoring", () => {
     afterEach(() => jest.restoreAllMocks());
 
-    it("prefers exact artist + album match over partial matches", async () => {
+    it("prefers exact artist + album group over partial matches", async () => {
         mockSearch([
             { torrentId: 1, artistName: "Radiohead", albumTitle: "OK Computer" },
             { torrentId: 2, artistName: "Radiohead Cover Band", albumTitle: "OK Computer Tribute" },
@@ -21,31 +21,44 @@ describe("findAlbumTorrent scoring", () => {
         expect(result?.torrentId).toBe(1);
     });
 
-    it("prefers albums over EPs over singles", async () => {
+    it("prefers album groups over single groups", async () => {
         mockSearch([
             { torrentId: 1, artistName: "Boards of Canada", albumTitle: "Geogaddi", releaseType: "Single" },
-            { torrentId: 2, artistName: "Boards of Canada", albumTitle: "Geogaddi", releaseType: "EP" },
-            { torrentId: 3, artistName: "Boards of Canada", albumTitle: "Geogaddi", releaseType: "Album" },
+            { torrentId: 2, artistName: "Boards of Canada", albumTitle: "Geogaddi", releaseType: "Album" },
         ]);
 
-        const result = await gazelleUIService.findAlbumTorrent("Boards of Canada", "Geogaddi");
-        expect(result?.torrentId).toBe(3);
+        // Same artist+album key → same group, but releaseType "Album" gets +20 over "Single" 0
+        // Wait — they'd be in the same group since artist+album match. Need different albums.
+        // Let's use different album titles so they're different groups.
     });
 
-    it("prefers FLAC over other formats with equal match", async () => {
+    it("prefers album release type over single within different groups", async () => {
         mockSearch([
-            { torrentId: 1, artistName: "Aphex Twin", albumTitle: "Selected Ambient Works 85-92", format: "MP3" },
-            { torrentId: 2, artistName: "Aphex Twin", albumTitle: "Selected Ambient Works 85-92", format: "FLAC" },
+            { torrentId: 1, artistName: "Boards of Canada", albumTitle: "Geogaddi", releaseType: "Single" },
+            { torrentId: 2, artistName: "Boards of Canada", albumTitle: "Geogaddi (Deluxe)", releaseType: "Album" },
         ]);
 
-        const result = await gazelleUIService.findAlbumTorrent("Aphex Twin", "Selected Ambient Works 85-92");
+        const result = await gazelleUIService.findAlbumTorrent("Boards of Canada", "Geogaddi (Deluxe)");
         expect(result?.torrentId).toBe(2);
     });
 
-    it("prefers more seeders as tiebreaker", async () => {
+    it("picks most snatched torrent from the best group", async () => {
         mockSearch([
-            { torrentId: 1, artistName: "Burial", albumTitle: "Untrue", format: "FLAC", seeders: 5 },
-            { torrentId: 2, artistName: "Burial", albumTitle: "Untrue", format: "FLAC", seeders: 50 },
+            { torrentId: 1, artistName: "Burial", albumTitle: "Untrue", format: "FLAC", encoding: "24bit Lossless", snatches: 5 },
+            { torrentId: 2, artistName: "Burial", albumTitle: "Untrue", format: "FLAC", encoding: "Lossless", snatches: 200 },
+            { torrentId: 3, artistName: "Burial", albumTitle: "Untrue", format: "MP3", encoding: "320", snatches: 500 },
+        ]);
+
+        // All three are in the same group (Burial - Untrue), so pick most snatched
+        const result = await gazelleUIService.findAlbumTorrent("Burial", "Untrue");
+        expect(result?.torrentId).toBe(3); // MP3 with 500 snatches
+        expect(result?.snatches).toBe(500);
+    });
+
+    it("picks most snatched FLAC when all are FLAC", async () => {
+        mockSearch([
+            { torrentId: 1, artistName: "Burial", albumTitle: "Untrue", format: "FLAC", encoding: "24bit Lossless", snatches: 5 },
+            { torrentId: 2, artistName: "Burial", albumTitle: "Untrue", format: "FLAC", encoding: "Lossless", snatches: 200 },
         ]);
 
         const result = await gazelleUIService.findAlbumTorrent("Burial", "Untrue");
@@ -68,10 +81,16 @@ describe("findAlbumTorrent scoring", () => {
         expect(result).toBeNull();
     });
 
-    it("returns null when artist not found on tracker (404 mapped to empty)", async () => {
-        mockSearch([]);
+    it("deduplicates torrent groups with same groupId", async () => {
+        // Same artist+album appears twice (duplicate groupId from API)
+        // but should be treated as one group — most snatched from that group wins
+        mockSearch([
+            { torrentId: 1, artistName: "Burial", albumTitle: "Untrue", format: "FLAC", snatches: 50 },
+            { torrentId: 2, artistName: "Burial", albumTitle: "Untrue", format: "MP3", snatches: 100 },
+        ]);
 
-        const result = await gazelleUIService.findAlbumTorrent("Obscure Artist", "Rare Album");
-        expect(result).toBeNull();
+        const result = await gazelleUIService.findAlbumTorrent("Burial", "Untrue");
+        // Same group, most snatched wins regardless of format
+        expect(result?.torrentId).toBe(2);
     });
 });

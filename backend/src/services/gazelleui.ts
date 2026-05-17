@@ -42,6 +42,22 @@ interface GazelleUIArtistResponse {
 }
 
 class GazelleUIService {
+    /** Decode HTML entities in tracker responses */
+    private static decodeHtml(text: string): string {
+        if (!text) return text;
+        return text
+            .replace(/&#(\d+);/g, (_, code) => String.fromCharCode(Number(code)))
+            .replace(/&#x([0-9a-fA-F]+);/g, (_, code) => String.fromCharCode(parseInt(code, 16)))
+            .replace(/&rsquo;/g, "'")
+            .replace(/&lsquo;/g, "'")
+            .replace(/&rdquo;/g, "\u201D")
+            .replace(/&ldquo;/g, "\u201C")
+            .replace(/&amp;/g, "&")
+            .replace(/&lt;/g, "<")
+            .replace(/&gt;/g, ">")
+            .replace(/&quot;/g, '"');
+    }
+
     private client: AxiosInstance | null = null;
     private enabled: boolean = false;
     private initialized: boolean = false;
@@ -126,14 +142,19 @@ class GazelleUIService {
             }
 
             // Flatten torrentgroup[] -> torrent[] into individual results
+            // Dedupe by groupId (API can return duplicate groups)
+            const seenGroups = new Set<number>();
             const results: GazelleUIArtistSearchResult[] = [];
             for (const group of data.torrentgroup) {
+                if (seenGroups.has(group.groupId)) continue;
+                seenGroups.add(group.groupId);
+
                 const releaseType = RELEASE_TYPE_MAP[group.releaseType] || "Unknown";
                 for (const t of group.torrent || []) {
                     results.push({
                         torrentId: t.id,
-                        artistName: t.artist,
-                        albumTitle: t.album,
+                        artistName: GazelleUIService.decodeHtml(t.artist),
+                        albumTitle: GazelleUIService.decodeHtml(t.album),
                         year: group.groupYear,
                         format: t.format,
                         encoding: t.encoding,
@@ -241,12 +262,21 @@ class GazelleUIService {
         const normalizedArtist = artistName.toLowerCase().trim();
         const normalizedAlbum = albumTitle.toLowerCase().trim();
 
-        // Score and rank results
-        const scored = results
-            .map((r) => {
+        // Group torrents by artist + album, score groups, then pick best torrent within group
+        const groups = new Map<string, GazelleUIArtistSearchResult[]>();
+        for (const r of results) {
+            const key = `${(r.artistName || "").toLowerCase().trim()}||${(r.albumTitle || "").toLowerCase().trim()}`;
+            if (!groups.has(key)) groups.set(key, []);
+            groups.get(key)!.push(r);
+        }
+
+        // Score each group
+        const scoredGroups = [...groups.entries()]
+            .map(([key, torrents]) => {
+                const representative = torrents[0];
                 let score = 0;
-                const rArtist = (r.artistName || "").toLowerCase().trim();
-                const rAlbum = (r.albumTitle || "").toLowerCase().trim();
+                const rArtist = (representative.artistName || "").toLowerCase().trim();
+                const rAlbum = (representative.albumTitle || "").toLowerCase().trim();
 
                 // Exact artist match
                 if (rArtist === normalizedArtist) score += 100;
@@ -257,29 +287,26 @@ class GazelleUIService {
                 else if (rAlbum.includes(normalizedAlbum) || normalizedAlbum.includes(rAlbum)) score += 50;
 
                 // Prefer albums over singles/EPs
-                if (r.releaseType === "Album") score += 20;
-                else if (r.releaseType === "EP") score += 10;
+                if (representative.releaseType === "Album") score += 20;
+                else if (representative.releaseType === "EP") score += 10;
 
-                // Prefer FLAC
-                if (r.format?.toLowerCase() === "flac") score += 15;
-
-                // Prefer more seeders
-                if (r.seeders) score += Math.min(r.seeders, 20);
-
-                return { result: r, score };
+                return { key, torrents, score };
             })
             .sort((a, b) => b.score - a.score);
 
-        const best = scored[0];
-        if (best.score < 50) {
-            logger.debug(`[GazelleUI] Best match too low (${best.score}): ${best.result.artistName} - ${best.result.albumTitle}`);
+        const bestGroup = scoredGroups[0];
+        if (!bestGroup || bestGroup.score < 50) {
+            logger.debug(`[GazelleUI] Best match too low (${bestGroup?.score ?? 0})`);
             return null;
         }
 
+        // Pick the most snatched torrent from the best group
+        const bestTorrent = bestGroup.torrents.sort((a, b) => (b.snatches || 0) - (a.snatches || 0))[0];
+
         logger.debug(
-            `[GazelleUI] Best match (score ${best.score}): ${best.result.artistName} - ${best.result.albumTitle} (torrent ${best.result.torrentId})`
+            `[GazelleUI] Best match (score ${bestGroup.score}): ${bestTorrent.artistName} - ${bestTorrent.albumTitle} (torrent ${bestTorrent.torrentId}, ${bestTorrent.snatches} snatches)`
         );
-        return best.result;
+        return bestTorrent;
     }
 
     /**
