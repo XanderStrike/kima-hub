@@ -558,7 +558,6 @@ async function processDownload(
                             status: "processing",
                             metadata: {
                                 ...((currentJob?.metadata as any) || {}),
-                                gazelleuiDownloadId: result.download.id,
                                 gazelleuiTorrentId: result.torrentId,
                                 currentSource: "gazelleui",
                             },

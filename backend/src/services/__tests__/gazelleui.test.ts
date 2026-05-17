@@ -1,7 +1,7 @@
 import { gazelleUIService } from "../gazelleui";
 import type { GazelleUIArtistSearchResult } from "../../types/gazelleui";
 
-// Mock searchArtists so we control the results without hitting HTTP
+// Mock ensureInitialized so we don't hit DB
 jest.spyOn(gazelleUIService as any, "ensureInitialized").mockResolvedValue(undefined);
 
 function mockSearch(results: GazelleUIArtistSearchResult[]) {
@@ -65,6 +65,13 @@ describe("findAlbumTorrent scoring", () => {
         mockSearch([]);
 
         const result = await gazelleUIService.findAlbumTorrent("Nobody", "Nothing");
+        expect(result).toBeNull();
+    });
+
+    it("returns null when artist not found on tracker (404 mapped to empty)", async () => {
+        mockSearch([]);
+
+        const result = await gazelleUIService.findAlbumTorrent("Obscure Artist", "Rare Album");
         expect(result).toBeNull();
     });
 });

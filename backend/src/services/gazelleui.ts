@@ -3,6 +3,10 @@
  *
  * Client for the GazelleUI private tracker download server.
  * Provides artist search, torrent download queuing, and download status tracking.
+ *
+ * The GazelleUI API searches by artist name and returns nested
+ * torrentgroup[] -> torrent[] structures. This service flattens them
+ * into individual torrent results for scoring and matching.
  */
 
 import axios, { AxiosInstance } from "axios";
@@ -12,6 +16,30 @@ import type {
     GazelleUIArtistSearchResult,
     GazelleUIDownload,
 } from "../types/gazelleui";
+import { RELEASE_TYPE_MAP } from "../types/gazelleui";
+
+/** Raw shape returned by the GazelleUI /api/v1/artists/search endpoint */
+interface GazelleUIArtistResponse {
+    name: string;
+    torrentgroup: Array<{
+        groupName: string;
+        groupYear: number;
+        releaseType: number;
+        groupId: number;
+        torrent: Array<{
+            id: number;
+            artist: string;
+            album: string;
+            format: string;
+            encoding: string;
+            media: string;
+            seeders: number;
+            leechers: number;
+            snatched: number;
+            size: string;
+        }>;
+    }>;
+}
 
 class GazelleUIService {
     private client: AxiosInstance | null = null;
@@ -73,38 +101,63 @@ class GazelleUIService {
     }
 
     /**
-     * Search for artists/albums on the tracker via GazelleUI
+     * Search for an artist on the tracker via GazelleUI.
+     * The API only accepts artist names — searching "artist album" will 404.
+     * Returns flattened torrent results from all torrent groups.
      *
-     * @param query - Search query (artist name, album title, etc.)
+     * @param artistName - Artist name to search for (NOT artist+album)
      * @returns Array of matching torrent results
      */
-    async searchArtists(query: string): Promise<GazelleUIArtistSearchResult[]> {
+    async searchArtists(artistName: string): Promise<GazelleUIArtistSearchResult[]> {
         await this.ensureInitialized();
         if (!this.client) {
             throw new Error("GazelleUI not configured");
         }
 
         try {
-            const response = await this.client.get("/artists/search", {
-                params: { q: query },
+            const response = await this.client.get<GazelleUIArtistResponse>("/artists/search", {
+                params: { q: artistName },
             });
 
-            // Handle both array and object responses
             const data = response.data;
-            if (Array.isArray(data)) {
-                return data;
-            }
-            if (data?.results && Array.isArray(data.results)) {
-                return data.results;
-            }
-            if (data?.data && Array.isArray(data.data)) {
-                return data.data;
+            if (!data?.torrentgroup || !Array.isArray(data.torrentgroup)) {
+                logger.warn("[GazelleUI] Unexpected search response format:", typeof data);
+                return [];
             }
 
-            logger.warn("[GazelleUI] Unexpected search response format:", typeof data);
-            return [];
+            // Flatten torrentgroup[] -> torrent[] into individual results
+            const results: GazelleUIArtistSearchResult[] = [];
+            for (const group of data.torrentgroup) {
+                const releaseType = RELEASE_TYPE_MAP[group.releaseType] || "Unknown";
+                for (const t of group.torrent || []) {
+                    results.push({
+                        torrentId: t.id,
+                        artistName: t.artist,
+                        albumTitle: t.album,
+                        year: group.groupYear,
+                        format: t.format,
+                        encoding: t.encoding,
+                        media: t.media,
+                        size: t.size,
+                        seeders: t.seeders,
+                        leechers: t.leechers,
+                        snatches: t.snatched,
+                        releaseType,
+                        releaseTypeId: group.releaseType,
+                        groupId: group.groupId,
+                    });
+                }
+            }
+
+            logger.debug(`[GazelleUI] Search for "${artistName}" returned ${results.length} torrents across ${data.torrentgroup.length} groups`);
+            return results;
         } catch (error: any) {
-            logger.error(`[GazelleUI] Artist search failed for "${query}":`, error.message);
+            // 404 means artist not found on tracker — return empty instead of throwing
+            if (error.response?.status === 404) {
+                logger.debug(`[GazelleUI] Artist not found on tracker: "${artistName}"`);
+                return [];
+            }
+            logger.error(`[GazelleUI] Artist search failed for "${artistName}":`, error.message);
             throw error;
         }
     }
@@ -154,10 +207,9 @@ class GazelleUIService {
             const response = await this.client.get("/downloads", { params });
 
             const data = response.data;
-            // Handle various response shapes
             if (Array.isArray(data)) return data;
+            if (data?.items && Array.isArray(data.items)) return data.items;
             if (data?.downloads && Array.isArray(data.downloads)) return data.downloads;
-            if (data?.data && Array.isArray(data.data)) return data.data;
 
             return [];
         } catch (error: any) {
@@ -167,21 +219,22 @@ class GazelleUIService {
     }
 
     /**
-     * Search for an album and return the best matching torrent
+     * Search for an album and return the best matching torrent.
+     * Searches by artist name, then scores results by album match.
      *
      * @param artistName - Artist name to search for
-     * @param albumTitle - Album title to match
+     * @param albumTitle - Album title to match within results
      * @returns Best matching torrent result, or null
      */
     async findAlbumTorrent(
         artistName: string,
         albumTitle: string
     ): Promise<GazelleUIArtistSearchResult | null> {
-        const query = `${artistName} ${albumTitle}`;
-        const results = await this.searchArtists(query);
+        // Search by artist name only — the API doesn't support artist+album queries
+        const results = await this.searchArtists(artistName);
 
         if (results.length === 0) {
-            logger.debug(`[GazelleUI] No results for "${query}"`);
+            logger.debug(`[GazelleUI] No results for artist "${artistName}"`);
             return null;
         }
 
@@ -204,8 +257,8 @@ class GazelleUIService {
                 else if (rAlbum.includes(normalizedAlbum) || normalizedAlbum.includes(rAlbum)) score += 50;
 
                 // Prefer albums over singles/EPs
-                if (r.releaseType?.toLowerCase() === "album") score += 20;
-                else if (r.releaseType?.toLowerCase() === "ep") score += 10;
+                if (r.releaseType === "Album") score += 20;
+                else if (r.releaseType === "EP") score += 10;
 
                 // Prefer FLAC
                 if (r.format?.toLowerCase() === "flac") score += 15;
