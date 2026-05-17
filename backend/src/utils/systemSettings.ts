@@ -75,6 +75,10 @@ export async function getSystemSettings(forceRefresh = false) {
             settings.soulseekPassword,
             "soulseekPassword",
         ),
+        gazelleUiApiKey: safeDecrypt(
+            settings.gazelleUiApiKey,
+            "gazelleUiApiKey",
+        ),
     };
 
     cachedSettings = decrypted;
